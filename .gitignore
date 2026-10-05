@@ -1,0 +1,39 @@
+# Local secrets and runtime configuration
+.env
+.env.*
+!.env.example
+全局项目文档.md
+alarm_py/feishu_config.json
+water/water_config.json
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build artifacts and large model assets
+build/
+dist/
+*.o
+*.so
+*.a
+*.engine
+*.trt
+*.onnx
+*.pt
+*.pth
+*.deb
+
+# Large media assets
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# OS and editor state
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

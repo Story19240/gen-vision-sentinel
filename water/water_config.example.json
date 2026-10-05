@@ -1,0 +1,65 @@
+{
+  "device_name": "1号发电机机组 - 冷却水智能视觉防护系统",
+  "web_port": 8080,
+  "alarm_duration_sec": 2.0,
+  "recovery_duration_sec": 2.0,
+  "cooldown_sec": 300,
+  "feishu": {
+    "enabled": true,
+    "app_id": "YOUR_FEISHU_APP_ID",
+    "app_secret": "YOUR_FEISHU_APP_SECRET",
+    "receive_id_type": "chat_id",
+    "receive_id": "YOUR_FEISHU_CHAT_ID",
+    "web_monitor_url": "http://192.168.55.1:8080"
+  },
+  "pipes": [
+    {
+      "id": 1,
+      "name": "左侧主粗管(大流量)",
+      "roi": [390, 580, 550, 750],
+      "threshold": 4.0,
+      "relay_channel": 3,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "中间细黄管(直流水)",
+      "roi": [550, 500, 600, 600],
+      "threshold": 3.5,
+      "relay_channel": 4,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "中偏右银管(散流水)",
+      "roi": [650, 530, 730, 600],
+      "threshold": 3.5,
+      "relay_channel": 5,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "右侧弯管口(直流水)",
+      "roi": [720, 640, 780, 700],
+      "threshold": 3.5,
+      "relay_channel": 6,
+      "enabled": true
+    },
+    {
+      "id": 5,
+      "name": "最右顺壁管(贴壁细流)",
+      "roi": [790, 600, 830, 700],
+      "threshold": 2.5,
+      "relay_channel": 7,
+      "enabled": true
+    },
+    {
+      "id": 6,
+      "name": "第6路预留管道",
+      "roi": [0, 0, 0, 0],
+      "threshold": 3.0,
+      "relay_channel": 8,
+      "enabled": false
+    }
+  ]
+}

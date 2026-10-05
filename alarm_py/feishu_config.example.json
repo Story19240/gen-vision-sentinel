@@ -1,0 +1,10 @@
+{
+  "app_id": "YOUR_FEISHU_APP_ID",
+  "app_secret": "YOUR_FEISHU_APP_SECRET",
+  "receive_id_type": "chat_id",
+  "receive_id": "YOUR_FEISHU_CHAT_ID",
+  "webhook_url": "",
+  "secret": "",
+  "device_name": "1号发电机机组 - 智能视觉监控预警系统",
+  "web_monitor_url": "http://192.168.55.1:8080"
+}
