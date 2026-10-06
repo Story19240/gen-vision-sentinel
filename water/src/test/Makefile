@@ -13,7 +13,7 @@ all: $(TARGETS)
 	@echo "  [编译成功] 动能截断分析 + 纯 C++ 飞书联动已就绪: ./water_flow_analyzer"
 	@echo "=================================================="
 
-water_flow_analyzer: water_flow_analyzer.cpp ../feishu_client.cpp
+water_flow_analyzer: water_flow_analyzer.cpp ../feishu_client.cpp ../relay_client.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
 
 clean:

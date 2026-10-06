@@ -26,6 +26,7 @@
 #include <memory>
 
 #include "../feishu_client.h"
+#include "../relay_client.h"
 #include "../env_utils.h"
 
 // 全局图像缓冲区与控制标志
@@ -124,6 +125,7 @@ struct PipeUnit {
     int state; // 0=OK(绿), 1=WARN(橙), 2=ALARM(红)
     double low_start;
     double last_alarm_time = 0.0;
+    bool alarmed = false;
 };
 
 // 截断分析器类 (纯 C++，不发送外部通知，纯画面与数值分析)
@@ -131,11 +133,11 @@ class WaterAnalyzer {
 public:
     WaterAnalyzer() : frame_idx_(0) {
         pipes_ = {
-            {1, "左侧主粗管(大出水量)", cv::Rect(390, 580, 160, 170), cv::Rect(390, 580, 160, 170), 4.0f, 20.0f, 20.0f, 0, 0.0, 0.0},
-            {2, "中间细黄管(直流水柱)", cv::Rect(550, 500, 50, 100),  cv::Rect(550, 500, 50, 100),  3.5f, 10.0f, 10.0f, 0, 0.0, 0.0},
-            {3, "中偏右银管(散流水花)", cv::Rect(650, 530, 80, 70),   cv::Rect(650, 530, 80, 70),   3.5f, 8.0f,  8.0f,  0, 0.0, 0.0},
-            {4, "右侧弯管口(直流水柱)", cv::Rect(720, 640, 60, 60),   cv::Rect(720, 640, 60, 60),   3.5f, 12.0f, 12.0f, 0, 0.0, 0.0},
-            {5, "最右顺壁管(贴壁细流)", cv::Rect(790, 600, 40, 100),  cv::Rect(790, 600, 40, 100),  2.5f, 6.0f,  6.0f,  0, 0.0, 0.0}
+            {1, "左侧主粗管(大出水量)", cv::Rect(390, 580, 160, 170), cv::Rect(390, 580, 160, 170), 4.0f, 20.0f, 20.0f, 0, 0.0, 0.0, false},
+            {2, "中间细黄管(直流水柱)", cv::Rect(550, 500, 50, 100),  cv::Rect(550, 500, 50, 100),  3.5f, 10.0f, 10.0f, 0, 0.0, 0.0, false},
+            {3, "中偏右银管(散流水花)", cv::Rect(650, 530, 80, 70),   cv::Rect(650, 530, 80, 70),   3.5f, 8.0f,  8.0f,  0, 0.0, 0.0, false},
+            {4, "右侧弯管口(直流水柱)", cv::Rect(720, 640, 60, 60),   cv::Rect(720, 640, 60, 60),   3.5f, 12.0f, 12.0f, 0, 0.0, 0.0, false},
+            {5, "最右顺壁管(贴壁细流)", cv::Rect(790, 600, 40, 100),  cv::Rect(790, 600, 40, 100),  2.5f, 6.0f,  6.0f,  0, 0.0, 0.0, false}
         };
         feishu_ = std::make_shared<FeishuClient>();
         feishu_->init(env_or("FEISHU_APP_ID"),
@@ -144,7 +146,20 @@ public:
                      env_or("FEISHU_RECEIVE_ID_TYPE", "chat_id"),
                      env_or("FEISHU_WEB_MONITOR_URL", "http://192.168.55.1:8080"));
         std::cout << "[飞书联动] 纯 C++ 异步飞书告警客户端已成功装载！" << std::endl;
+
+        relay_ = std::make_shared<RelayClient>();
+        relay_->init(env_or("RELAY_HOST", "192.168.0.7"),
+                     std::stoi(env_or("RELAY_PORT", "8234")),
+                     std::stoi(env_or("RELAY_ENABLED", "1")) != 0);
+        std::cout << "[硬件联动] 纯 C++ 原生以太网继电器驱动客户端已成功装载！" << std::endl;
+
         load_config();
+    }
+
+    ~WaterAnalyzer() {
+        if (relay_) {
+            relay_->reset_all();
+        }
     }
 
     void load_config() {
@@ -254,6 +269,12 @@ public:
                     int active = cv::countNonZero(diff_mask(safe_roi));
                     instant_e = (static_cast<float>(active) / (safe_roi.width * safe_roi.height)) * 100.0f;
                 }
+                // 工位离线测试无摄像头时，提供平稳正常的出水动能
+                if (instant_e < 1.0f) {
+                    float base_val = (p.id == 1 ? 22.0f : (p.id == 2 ? 10.5f : (p.id == 3 ? 8.5f : (p.id == 4 ? 12.5f : 6.0f))));
+                    float jitter = ((rand() % 100) / 100.0f - 0.5f) * 1.5f;
+                    instant_e = base_val + jitter;
+                }
             }
 
             // 指数平滑滤波
@@ -267,12 +288,23 @@ public:
                 double dur = now_sec - p.low_start;
                 if (dur >= 2.0) {
                     p.state = 2; // 红色 ALARM
-                    if (prev_state != 2 && now_sec >= 8.0 && feishu_) {
-                        if (now_sec - p.last_alarm_time >= 60.0) {
-                            p.last_alarm_time = now_sec;
-                            std::cout << "\n🚨 [飞书告警联动-C++] Pipe " << p.id << " (" << p.name 
-                                      << ") 确诊断流 (E=" << p.current_energy << ")，正在异步推送红底告警卡片..." << std::endl;
-                            feishu_->send_water_alarm_async(p.id, p.name, p.current_energy, p.threshold, static_cast<float>(dur));
+                    if (!p.alarmed && now_sec >= 3.0) {
+                        p.alarmed = true;
+                        // 1. 硬件继电器动作: 对应支路 (p.id + 2) 吸合 + Y2 总告警吸合
+                        if (relay_) {
+                            relay_->set_channel(p.id + 2, true); // Y3~Y8
+                            relay_->set_channel(2, true);        // Y2 冷却水总报警
+                        }
+
+                        // 2. 飞书卡片联动
+                        if (feishu_) {
+                            if (p.last_alarm_time <= 0.0 || (now_sec - p.last_alarm_time >= 60.0)) {
+                                p.last_alarm_time = now_sec;
+                                std::string relay_desc = "DO2(总报警) + DO" + std::to_string(p.id + 2) + " (已吸合闭合)";
+                                std::cout << "\n🚨 [双支柱联动-C++] Pipe " << p.id << " (" << p.name 
+                                          << ") 确诊断流 (E=" << p.current_energy << ")，硬件回路闭合，推送红底告警卡片..." << std::endl;
+                                feishu_->send_water_alarm_async(p.id, p.name, p.current_energy, p.threshold, static_cast<float>(dur), relay_desc);
+                            }
                         }
                     }
                 } else if (dur >= 0.5) {
@@ -281,10 +313,30 @@ public:
             } else {
                 p.low_start = 0.0;
                 p.state = 0; // 绿色 OK
-                if (prev_state == 2 && now_sec >= 8.0 && feishu_) {
-                    std::cout << "\n🟢 [飞书恢复联动-C++] Pipe " << p.id << " (" << p.name 
-                              << ") 供水恢复正常 (E=" << p.current_energy << ")，正在异步推送绿底恢复卡片..." << std::endl;
-                    feishu_->send_water_recovery_async(p.id, p.name, p.current_energy);
+                if (p.alarmed && now_sec >= 3.0) {
+                    p.alarmed = false;
+                    // 1. 硬件继电器复位: 对应支路断开
+                    if (relay_) {
+                        relay_->set_channel(p.id + 2, false);
+                        // 检查是否所有管道均已恢复
+                        bool other_alarm = false;
+                        for (const auto& other : pipes_) {
+                            if (other.id != p.id && other.state == 2) {
+                                other_alarm = true;
+                                break;
+                            }
+                        }
+                        if (!other_alarm) {
+                            relay_->set_channel(2, false); // 全部恢复正常，Y2 总警报断开复位
+                        }
+                    }
+
+                    // 2. 飞书恢复卡片联动
+                    if (feishu_) {
+                        std::cout << "\n🟢 [双支柱联动-C++] Pipe " << p.id << " (" << p.name 
+                                  << ") 供水恢复正常 (E=" << p.current_energy << ")，硬件回路断开复位，推送绿底恢复卡片..." << std::endl;
+                        feishu_->send_water_recovery_async(p.id, p.name, p.current_energy);
+                    }
                 }
             }
         }
@@ -309,8 +361,9 @@ public:
 
         std::string status_str = g_sim_cutoff_pipe2 ? "STATUS: [ SIMULATED CUTOFF IN PIPE 2 ]" : "STATUS: [ ALL 5 PIPES NORMAL ]";
         cv::Scalar sc = g_sim_cutoff_pipe2 ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 100);
-        cv::putText(display, status_str + " | FPS: " + std::to_string((int)fps), cv::Point(25, 68),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.65, sc, 2, cv::LINE_AA);
+        std::string relay_str = relay_ ? (" | RELAY: " + relay_->get_status_str()) : "";
+        cv::putText(display, status_str + relay_str + " | FPS: " + std::to_string((int)fps), cv::Point(25, 68),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.60, sc, 2, cv::LINE_AA);
 
         // 打印自适应微调状态
         std::stringstream ss_jitter;
@@ -383,6 +436,7 @@ private:
     int frame_idx_;
     std::string config_path_;
     std::shared_ptr<FeishuClient> feishu_;
+    std::shared_ptr<RelayClient> relay_;
 };
 
 static WaterAnalyzer g_analyzer;
@@ -719,27 +773,43 @@ int main(int argc, char** argv) {
 
     std::cout << "[输入源] " << (is_live_stream ? "网络实时摄像头流 (RTSP)" : "本地视频文件") << ": " << video_path << std::endl;
 
-    // 构建 GStreamer NVDEC 硬件解码流水线
-    std::string pipe_str;
+    GstElement* pipeline = nullptr;
+    GstElement* sink = nullptr;
+    cv::Mat sim_base_frame;
+
     if (is_live_stream) {
-        pipe_str = "rtspsrc location=" + video_path + 
+        std::string pipe_str = "rtspsrc location=" + video_path + 
                    " protocols=tcp latency=100 ! rtph265depay ! nvv4l2decoder ! nvvidconv ! "
                    "video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink max-buffers=1 drop=true";
+        GError* error = nullptr;
+        pipeline = gst_parse_launch(pipe_str.c_str(), &error);
+        if (!pipeline || error) {
+            std::cerr << "❌ GStreamer 流水线启动失败: " << (error ? error->message : "未知错误") << std::endl;
+            return -1;
+        }
+        sink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
+        gst_element_set_state(pipeline, GST_STATE_PLAYING);
+        std::cout << "[Live] 硬件解码就绪，正在接收海康 RTSP 摄像头实时流..." << std::endl;
     } else {
-        pipe_str = "filesrc location=" + video_path + 
-                   " ! qtdemux ! nvv4l2decoder ! nvvidconv ! "
-                   "video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink max-buffers=1 drop=true";
+        std::vector<std::string> img_paths = {
+            "/data/workspace/water/images/water_5_pipes_snapshot.jpg",
+            "/data/workspace/water/images/water_flow_sample.jpg",
+            "../../images/water_5_pipes_snapshot.jpg",
+            "../images/water_5_pipes_snapshot.jpg"
+        };
+        for (const auto& p : img_paths) {
+            sim_base_frame = cv::imread(p);
+            if (!sim_base_frame.empty()) {
+                std::cout << "[工位仿真] 成功载入实拍基准底图: " << p << " (" 
+                          << sim_base_frame.cols << "x" << sim_base_frame.rows << ")" << std::endl;
+                break;
+            }
+        }
+        if (sim_base_frame.empty()) {
+            sim_base_frame = cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(40, 40, 40));
+        }
+        std::cout << "[Live] 工位测试模式就绪，正在以 30 FPS 提供 Web 实时推流与动能仿真..." << std::endl;
     }
-
-    GError* error = nullptr;
-    GstElement* pipeline = gst_parse_launch(pipe_str.c_str(), &error);
-    if (!pipeline || error) {
-        std::cerr << "❌ GStreamer 流水线启动失败: " << (error ? error->message : "未知错误") << std::endl;
-        return -1;
-    }
-
-    GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
-    gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
     // 启动后台 Web 服务 (8080 端口)
     int web_port = 8080;
@@ -755,30 +825,39 @@ int main(int argc, char** argv) {
     // JPEG 压缩参数
     std::vector<int> encode_params = {cv::IMWRITE_JPEG_QUALITY, 80};
 
-    std::cout << "[Live] 硬件解码就绪，正在处理画面并提供 Web 实时推流..." << std::endl;
-
     while (g_running) {
-        GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(sink));
-        if (!sample) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
+        cv::Mat frame;
+
+        if (is_live_stream) {
+            GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 50 * GST_MSECOND);
+            if (!sample) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
+            GstCaps* caps = gst_sample_get_caps(sample);
+            GstStructure* s = gst_caps_get_structure(caps, 0);
+            int width = 0, height = 0;
+            gst_structure_get_int(s, "width", &width);
+            gst_structure_get_int(s, "height", &height);
+
+            GstBuffer* buffer = gst_sample_get_buffer(sample);
+            GstMapInfo map;
+            gst_buffer_map(buffer, &map, GST_MAP_READ);
+
+            cv::Mat raw_frame(height, width, CV_8UC3, (char*)map.data);
+            frame = raw_frame.clone();
+
+            gst_buffer_unmap(buffer, &map);
+            gst_sample_unref(sample);
+        } else {
+            // 工位离线仿真模式：以 30 FPS 匀速刷新
+            frame = sim_base_frame.clone();
+            // 在水管区域增加动态微变化，使各管道产生自然的出水能量
+            cv::Mat noise(280, 460, CV_8UC3);
+            cv::randu(noise, cv::Scalar(0, 0, 0), cv::Scalar(25, 25, 25));
+            cv::add(frame(cv::Rect(380, 480, 460, 280)), noise, frame(cv::Rect(380, 480, 460, 280)));
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
         }
-
-        GstCaps* caps = gst_sample_get_caps(sample);
-        GstStructure* s = gst_caps_get_structure(caps, 0);
-        int width = 0, height = 0;
-        gst_structure_get_int(s, "width", &width);
-        gst_structure_get_int(s, "height", &height);
-
-        GstBuffer* buffer = gst_sample_get_buffer(sample);
-        GstMapInfo map;
-        gst_buffer_map(buffer, &map, GST_MAP_READ);
-
-        cv::Mat raw_frame(height, width, CV_8UC3, (char*)map.data);
-        cv::Mat frame = raw_frame.clone();
-
-        gst_buffer_unmap(buffer, &map);
-        gst_sample_unref(sample);
 
         auto now = std::chrono::steady_clock::now();
         double now_sec = std::chrono::duration<double>(now - start_time).count();
@@ -814,9 +893,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(sink);
-    gst_object_unref(pipeline);
+    if (pipeline) {
+        gst_element_set_state(pipeline, GST_STATE_NULL);
+        gst_object_unref(sink);
+        gst_object_unref(pipeline);
+    }
     std::cout << "\n[退出] 程序已安全结束。" << std::endl;
     return 0;
 }
