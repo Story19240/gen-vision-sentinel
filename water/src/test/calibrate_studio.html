@@ -1,0 +1,1616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>发电机冷却水在线标定与实时监控系统</title>
+<style>
+  :root {
+    --bg-main: #0b0e14;
+    --bg-card: #151922;
+    --bg-card-sub: #1e2430;
+    --border-color: #2b3342;
+    --text-primary: #f0f6fc;
+    --text-muted: #8b949e;
+    --accent-blue: #388bfd;
+    --accent-green: #2ea043;
+    --accent-yellow: #d29922;
+    --accent-purple: #a371f7;
+    --accent-red: #f85149;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    padding: 12px 16px;
+    transition: padding 0.2s ease;
+  }
+
+  /* 顶部导航头 */
+  .top-navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  .title-group { display: flex; align-items: center; gap: 14px; }
+  .title-group h1 { font-size: 19px; font-weight: 700; color: #58a6ff; }
+  
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.3s;
+  }
+  .status-pill.calib {
+    background: rgba(210, 153, 34, 0.15);
+    border: 1px solid var(--accent-yellow);
+    color: var(--accent-yellow);
+  }
+  .status-pill.monitor {
+    background: rgba(46, 160, 67, 0.15);
+    border: 1px solid var(--accent-green);
+    color: #3fb950;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* 主体左右布局 */
+  .main-container {
+    display: flex;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* 左侧视频流与画布容器 (严格锁定 16:9 纵横比) */
+  .viewport-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: #000;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.8);
+    transition: all 0.2s ease;
+  }
+
+  .video-stage {
+    position: relative;
+    width: 100%;
+    max-height: 100%;
+    aspect-ratio: 16 / 9;
+    background: #05070a;
+    cursor: pointer;
+  }
+
+  #stream-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: fill;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  #draw-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
+  }
+
+  /* 画面顶部浮动 HUD */
+  .viewport-header-hud {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 30;
+    pointer-events: auto;
+  }
+  .hud-btn {
+    background: rgba(11, 14, 20, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid #388bfd;
+    color: #58a6ff;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hud-btn:hover {
+    background: #388bfd;
+    color: #fff;
+    transform: scale(1.04);
+  }
+  .hud-pill {
+    background: rgba(11, 14, 20, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(46, 160, 67, 0.5);
+    color: #3fb950;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hud-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+    box-shadow: 0 0 8px #3fb950;
+    animation: hud-pulse 1.8s infinite;
+  }
+  @keyframes hud-pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+  }
+
+  /* 画布底部悬浮信息条 */
+  .viewport-footer {
+    position: absolute;
+    bottom: 12px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .info-tag {
+    background: rgba(11, 14, 20, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: Consolas, monospace;
+    color: #7ee787;
+  }
+
+  /* ================= 全屏模式规范 (Native Fullscreen + Web Cinema) ================= */
+  :fullscreen {
+    background: #000 !important;
+  }
+  :-webkit-full-screen {
+    background: #000 !important;
+  }
+  .viewport-panel:fullscreen,
+  .viewport-panel:-webkit-full-screen {
+    border: none !important;
+    border-radius: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    background: #000 !important;
+    justify-content: center !important;
+    align-items: center !important;
+  }
+  .viewport-panel:fullscreen .video-stage,
+  .viewport-panel:-webkit-full-screen .video-stage {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    aspect-ratio: 16 / 9;
+  }
+  .viewport-panel:fullscreen .viewport-header-hud,
+  .viewport-panel:-webkit-full-screen .viewport-header-hud {
+    top: 24px;
+    right: 28px;
+  }
+  .viewport-panel:fullscreen .viewport-footer,
+  .viewport-panel:-webkit-full-screen .viewport-footer {
+    bottom: 24px;
+    left: 28px;
+    right: 28px;
+  }
+
+  /* 兼容降级沉浸模式 (Theater Mode) */
+  body.theater-mode {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #000 !important;
+  }
+  body.theater-mode .top-navbar,
+  body.theater-mode .sidebar-panel {
+    display: none !important;
+  }
+  body.theater-mode .main-container {
+    width: 100vw !important;
+    height: 100vh !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  body.theater-mode .viewport-panel {
+    border: none !important;
+    border-radius: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+  }
+  body.theater-mode .video-stage {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    aspect-ratio: 16 / 9;
+  }
+
+  /* 右侧边栏容器 (高度严格约束 + 明显滚动条) */
+  .sidebar-panel {
+    width: 410px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: calc(100vh - 75px);
+    max-height: calc(100vh - 75px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 6px;
+    flex-shrink: 0;
+  }
+  .sidebar-panel::-webkit-scrollbar { width: 8px; }
+  .sidebar-panel::-webkit-scrollbar-track { background: #0d1117; border-radius: 4px; }
+  .sidebar-panel::-webkit-scrollbar-thumb { background: #388bfd; border-radius: 4px; }
+  .sidebar-panel::-webkit-scrollbar-thumb:hover { background: #58a6ff; }
+
+  /* 边栏顶部功能切换选项卡 */
+  .sidebar-tabs {
+    display: flex;
+    gap: 6px;
+    background: #0d1117;
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 9px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .tab-btn:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .tab-btn.active {
+    background: var(--bg-card-sub);
+    color: #58a6ff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-color);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 13px;
+    margin-bottom: 10px;
+  }
+  .card:last-child { margin-bottom: 0; }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #c9d1d9;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* 按钮规范 */
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    margin-bottom: 6px;
+  }
+  .btn:last-child { margin-bottom: 0; }
+  .btn-pipe {
+    background: var(--bg-card-sub);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    justify-content: flex-start;
+  }
+  .btn-pipe:hover {
+    border-color: #58a6ff;
+    background: #252d3d;
+    transform: translateX(3px);
+  }
+  .btn-pipe .badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.08);
+    color: var(--text-muted);
+  }
+
+  .btn-anchor {
+    background: rgba(163, 113, 247, 0.15);
+    border: 1px solid var(--accent-purple);
+    color: var(--accent-purple);
+  }
+  .btn-anchor:hover {
+    background: var(--accent-purple);
+    color: #fff;
+  }
+
+  .btn-success {
+    background: var(--accent-green);
+    color: #fff;
+    font-size: 14px;
+    padding: 11px;
+    box-shadow: 0 4px 14px rgba(46, 160, 67, 0.4);
+  }
+  .btn-success:hover { background: #3fb950; }
+
+  .btn-sub {
+    background: var(--bg-card-sub);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 7px;
+  }
+  .btn-sub:hover { color: var(--text-primary); border-color: #8b949e; }
+  .btn-danger { background: #da3633; color: #fff; }
+  .btn-danger:hover { background: #f85149; }
+
+  .tip-box {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    background: rgba(13, 17, 23, 0.6);
+    padding: 8px 10px;
+    border-radius: 6px;
+    border-left: 3px solid #388bfd;
+    margin-top: 8px;
+  }
+
+  /* 监控模式：动能数据仪表卡片 */
+  .monitor-pipe-card {
+    background: var(--bg-card-sub);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-bottom: 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    transition: all 0.2s ease;
+  }
+  .monitor-pipe-card.alarm {
+    border-color: var(--accent-red);
+    background: rgba(218, 54, 51, 0.15);
+    box-shadow: 0 0 10px rgba(248, 81, 73, 0.3);
+  }
+  .monitor-pipe-card.warn {
+    border-color: var(--accent-yellow);
+    background: rgba(210, 153, 34, 0.12);
+  }
+
+  .meter-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: bold; }
+  .meter-bar-bg { width: 100%; height: 7px; background: #0d1117; border-radius: 4px; overflow: hidden; position: relative; }
+  .meter-bar-fill { height: 100%; background: #2ea043; border-radius: 4px; transition: width 0.25s ease; }
+  .meter-bar-fill.warn { background: #d29922; }
+  .meter-bar-fill.alarm { background: #f85149; }
+  .meter-footer { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); }
+
+  .del-icon-btn {
+    background: none;
+    border: none;
+    color: #f85149;
+    cursor: pointer;
+    font-size: 15px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .del-icon-btn:hover { background: rgba(248, 81, 73, 0.2); }
+
+  /* ================= 核心业务决策参数 ================= */
+  .param-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .param-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .param-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .input-with-unit {
+    display: flex;
+    align-items: center;
+    background: #0d1117;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 0 6px;
+    transition: border-color 0.2s;
+  }
+  .input-with-unit:focus-within {
+    border-color: #58a6ff;
+  }
+  .styled-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: #f0f6fc;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 2px;
+    outline: none;
+  }
+  .unit-tag {
+    font-size: 11px;
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .btn-save-biz {
+    background: #238636;
+    color: #fff;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(35, 134, 54, 0.3);
+  }
+  .btn-save-biz:hover { background: #2ea043; }
+
+  /* ================= 图像视觉算法层 (高级设置) ================= */
+  .adv-accordion {
+    background: var(--bg-card);
+    border: 1px solid #8957e5;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .adv-accordion summary {
+    padding: 11px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #d2a8ff;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(163, 113, 247, 0.12);
+    transition: all 0.2s;
+  }
+  .adv-accordion summary:hover {
+    background: rgba(163, 113, 247, 0.2);
+  }
+  .adv-content {
+    padding: 13px 14px;
+    background: #0d1117;
+    border-top: 1px solid #8957e5;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .adv-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .adv-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #c9d1d9;
+  }
+  .val-badge {
+    background: rgba(163, 113, 247, 0.22);
+    color: #d2a8ff;
+    padding: 1px 8px;
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    font-weight: bold;
+    border: 1px solid rgba(163, 113, 247, 0.4);
+  }
+  .slider-control {
+    width: 100%;
+    accent-color: #a371f7;
+    cursor: pointer;
+    height: 6px;
+  }
+  .hint-text {
+    font-size: 11px;
+    color: #8b949e;
+    line-height: 1.35;
+  }
+  .styled-select {
+    width: 100%;
+    background: #161b22;
+    border: 1px solid var(--border-color);
+    color: #f0f6fc;
+    padding: 6px 8px;
+    border-radius: 5px;
+    font-size: 12px;
+    outline: none;
+    font-family: inherit;
+  }
+  .styled-select:focus {
+    border-color: #a371f7;
+  }
+  .btn-save-adv {
+    background: var(--accent-purple);
+    color: #fff;
+    padding: 9px;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 4px;
+    box-shadow: 0 4px 12px rgba(163, 113, 247, 0.35);
+  }
+  .btn-save-adv:hover {
+    background: #b084f9;
+  }
+
+  /* 阈值快捷微调框 */
+  .th-quick-input {
+    width: 52px;
+    background: #0d1117;
+    border: 1px solid var(--border-color);
+    color: #ffcc00;
+    font-family: Consolas, monospace;
+    font-weight: bold;
+    font-size: 12px;
+    text-align: center;
+    border-radius: 4px;
+    padding: 2px 0;
+    margin: 0 3px;
+    outline: none;
+  }
+  .th-quick-input:focus {
+    border-color: #58a6ff;
+    box-shadow: 0 0 6px rgba(88, 166, 255, 0.4);
+  }
+
+  /* 悬浮 Toast 吐司通知条 */
+  #toast-msg {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    background: rgba(46, 160, 67, 0.95);
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.7);
+    z-index: 9999;
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #toast-msg.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+</style>
+</head>
+<body>
+
+  <!-- 浮动通知条 -->
+  <div id="toast-msg"><span>⚡</span> <span id="toast-text">参数已热更新生效</span></div>
+
+  <!-- 1. 顶部状态栏 -->
+  <header class="top-navbar">
+    <div class="title-group">
+      <h1>💧 发电机冷却水智能视觉防护系统</h1>
+      <div id="status-pill" class="status-pill calib">
+        <span id="status-dot" class="status-dot" style="background: var(--accent-yellow);"></span>
+        <span id="status-text">开机标定阶段 (等待画框)</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button id="recalib-top-btn" class="btn btn-sub" style="margin:0; width:auto; display:none; color:#e3b341;" onclick="enterCalibration()">⚙️ 重新标定管口</button>
+      <button class="btn btn-sub" style="margin:0; width:auto; border-color: #8957e5; color: #d2a8ff;" onclick="switchSidebarTab('params')">⚙️ 算法与高级设置</button>
+      <button id="top-fs-btn" class="btn btn-sub" style="margin:0; width:auto; border-color: #388bfd; color: #58a6ff;" onclick="toggleFullscreen()">⛶ 全屏监控大屏</button>
+      <button class="btn btn-sub" style="margin:0; width:auto;" onclick="toggleCutoff()">🚨 模拟断流演练</button>
+    </div>
+  </header>
+
+  <!-- 2. 主体操作区 -->
+  <main class="main-container">
+    
+    <!-- 左侧：16:9 物理锁屏视频舞台 (纯净底层，零重复框，支持全屏展开) -->
+    <div class="viewport-panel" id="viewport-panel">
+      
+      <!-- 画面内部顶部浮动 HUD 控制条 -->
+      <div class="viewport-header-hud">
+        <div class="hud-pill hud-live">
+          <span class="hud-dot"></span> 实时工业监控中
+        </div>
+        <button id="floating-fs-btn" class="hud-btn" onclick="toggleFullscreen()" title="点击全屏 / 退出全屏 (快捷键 F 或 双击画面)">
+          ⛶ 全屏大屏视角
+        </button>
+      </div>
+
+      <div class="video-stage" id="video-stage" title="双击画面可快捷切换全屏视角">
+        <!-- 始终拉取海康网络摄像头实时流 (无烙印原始画质) -->
+        <img id="stream-img" src="/video_feed">
+        <!-- Canvas 覆盖层：物理尺寸严格锁定 1920x1080，唯一高精度绘制源 -->
+        <canvas id="draw-canvas" width="1920" height="1080"></canvas>
+      </div>
+
+      <!-- 底部坐标与运行指示条 -->
+      <div class="viewport-footer">
+        <div id="coord-info" class="info-tag">👉 鼠标选框: [等待绘制...] 尺寸: 0x0 px</div>
+        <div id="fps-info" class="info-tag" style="color: #58a6ff;">摄像头状态: H.265 硬解实时在线 (1920x1080)</div>
+      </div>
+    </div>
+
+    <!-- 右侧：控制边栏 (支持两套选项卡) -->
+    <aside class="sidebar-panel">
+
+      <!-- 选项卡顶部切换导航 -->
+      <div class="sidebar-tabs">
+        <button id="tab-btn-monitor" class="tab-btn active" onclick="switchSidebarTab('monitor')">
+          📊 实时监控看板
+        </button>
+        <button id="tab-btn-params" class="tab-btn" onclick="switchSidebarTab('params')">
+          ⚙️ 算法决策与高级设置
+        </button>
+      </div>
+
+      <!-- ================= 选项卡 1：【实时监控 / 标定专属界面】 ================= -->
+      <div id="tab-content-monitor">
+        
+        <!-- 子视图 A：【标定模式专属面板】 -->
+        <div id="view-calibration">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">🎯 1. 鼠标选框快速绑定</span>
+            </div>
+            <div id="selection-status" style="font-size: 12px; color: var(--accent-yellow); margin-bottom: 8px; font-weight: bold;">
+              请在画面管口上按住左键拖拽拉框...
+            </div>
+
+            <button class="btn btn-pipe" onclick="bindPipe(1, '左侧主粗管(大流量)', 4.0)">
+              <span style="color: #ffcc00;">●</span> 绑定给 1号管 (左侧主粗管)
+              <span class="badge">按 [1]</span>
+            </button>
+            <button class="btn btn-pipe" onclick="bindPipe(2, '中间细黄管(直流水)', 3.5)">
+              <span style="color: #00ff80;">●</span> 绑定给 2号管 (中间细黄管)
+              <span class="badge">按 [2]</span>
+            </button>
+            <button class="btn btn-pipe" onclick="bindPipe(3, '中偏右银管(散流水)', 3.5)">
+              <span style="color: #00c8ff;">●</span> 绑定给 3号管 (中偏右银管)
+              <span class="badge">按 [3]</span>
+            </button>
+            <button class="btn btn-pipe" onclick="bindPipe(4, '右侧弯管口(直流水)', 3.5)">
+              <span style="color: #ff66ff;">●</span> 绑定给 4号管 (右侧弯管口)
+              <span class="badge">按 [4]</span>
+            </button>
+            <button class="btn btn-pipe" onclick="bindPipe(5, '最右顺壁管(贴壁细流)', 2.5)">
+              <span style="color: #64b4ff;">●</span> 绑定给 5号管 (最右顺壁管)
+              <span class="badge">按 [5]</span>
+            </button>
+            <button class="btn btn-pipe" onclick="bindPipe(6, '备用预留管', 3.0)">
+              <span style="color: #ff9933;">●</span> 绑定给 6号管 (备用预留管)
+              <span class="badge">按 [6]</span>
+            </button>
+
+            <div class="tip-box">
+              💡 <strong>快捷操作</strong>：画好框后，<strong>直接按键盘数字 1~6</strong> 即可秒级绑定对应管道！
+            </div>
+          </div>
+
+          <!-- 抗抖锚点 -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">⚓ 2. 机位抗抖锚点 (可选)</span>
+            </div>
+            <button class="btn btn-anchor" onclick="setAnchor()">
+              🎯 将当前选框设为【抗抖锚点】(按 A)
+            </button>
+            <div id="anchor-info-card" style="font-size: 12px; margin-top: 8px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+              <span>状态: 纯静态 0 锚点模式</span>
+            </div>
+          </div>
+
+          <!-- 已标定管口列表 -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">📋 3. 已标定管口 (<span id="pipe-count-num">0</span> 根)</span>
+              <button class="del-icon-btn" style="font-size: 12px;" onclick="clearAllPipes()" title="清空全部">🗑️ 清空全部</button>
+            </div>
+            <div id="pipe-list-container" style="max-height: 140px; overflow-y: auto;">
+              <div style="color: var(--text-muted); text-align: center; padding: 12px 0; font-size: 12px;">暂无管口，请在左侧画面上框选...</div>
+            </div>
+          </div>
+
+          <!-- 启动控制 -->
+          <div class="card">
+            <button class="btn btn-success" onclick="startMonitoring()">
+              🚀 确认标定完成，开始正式监控
+            </button>
+            <button class="btn btn-sub" onclick="loadHistory()" style="margin-top: 6px;">
+              📂 载入上次保存的历史配置微调
+            </button>
+          </div>
+        </div>
+
+        <!-- 子视图 B：【正式监控模式专属面板】 -->
+        <div id="view-monitoring" style="display: none;">
+          <div class="card" style="border-color: var(--accent-green); background: rgba(46,160,67,0.06);">
+            <div class="card-header">
+              <span class="card-title" style="color:#3fb950;">🟢 实时监控运行中</span>
+              <span id="mon-cut-state" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(46,160,67,0.2); color:#3fb950;">状态良好</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+              系统对各管道独立执行帧差动能分析。任何单管跌破临界阈值持续 > 设定时长将触发声光/继电器闭合并推送飞书告警卡片。
+            </div>
+          </div>
+
+          <!-- 各管道动能仪表监控列表 -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">📊 各管道动能仪表监控</span>
+              <span style="font-size: 11px; color: var(--accent-yellow);">阈值可现场即改即生效</span>
+            </div>
+            <div id="mon-meters-list" style="display: flex; flex-direction: column; gap: 5px;">
+              <!-- 由 JS 实时循环渲染 -->
+            </div>
+          </div>
+
+          <!-- 控制按钮 -->
+          <div class="card">
+            <button class="btn btn-pipe" style="color: #e3b341; border-color: #d29922;" onclick="enterCalibration()">
+              ⚙️ 重新标定管口 (调整机位/重选)
+            </button>
+            <button class="btn btn-danger" onclick="toggleCutoff()">
+              🚨 触发/恢复【2号管断水演练】
+            </button>
+            <button class="btn btn-sub" style="margin-top: 6px; border-color: #388bfd; color: #58a6ff;" onclick="toggleFullscreen()">
+              ⛶ 展开【全屏大屏监控视角】(快捷键 F)
+            </button>
+            <button class="btn btn-sub" style="margin-top: 6px; border-color: #a371f7; color: #d2a8ff;" onclick="switchSidebarTab('params')">
+              ⚙️ 打开【算法决策与高级参数配置】 ›
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ================= 选项卡 2：【算法决策与高级参数专属设置面板】 ================= -->
+      <div id="tab-content-params" style="display: none;">
+        
+        <!-- 核心业务决策参数 (常规显示) -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">⏱️ 1. 核心业务决策参数 (常规显示)</span>
+            <span style="font-size: 11px; color: #7ee787;">⚡ 现场即改即生效</span>
+          </div>
+          <div class="param-grid">
+            <div class="param-field">
+              <span class="param-label">报警确认延时</span>
+              <div class="input-with-unit">
+                <input type="number" id="cfg-alarm-dur" class="styled-input" step="0.5" min="0.5" max="30" value="2.0">
+                <span class="unit-tag">秒</span>
+              </div>
+            </div>
+            <div class="param-field">
+              <span class="param-label">复位确认延时</span>
+              <div class="input-with-unit">
+                <input type="number" id="cfg-rec-dur" class="styled-input" step="0.5" min="0.5" max="30" value="2.0">
+                <span class="unit-tag">秒</span>
+              </div>
+            </div>
+            <div class="param-field">
+              <span class="param-label">飞书告警冷却</span>
+              <div class="input-with-unit">
+                <input type="number" id="cfg-cooldown" class="styled-input" step="5" min="5" max="600" value="60">
+                <span class="unit-tag">秒</span>
+              </div>
+            </div>
+          </div>
+          <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-bottom: 10px;">
+            💡 <strong>说明</strong>：连续跌破阈值达设定秒数才确诊报警；水流恢复达设定秒数才解除继电器；同管报警在冷却期内不重复推飞书。
+          </div>
+          <button class="btn btn-save-biz" onclick="saveBusinessParams()">
+            💾 保存业务决策参数 (热更新生效)
+          </button>
+        </div>
+
+        <!-- 各管道阈值统一速调列表 -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">🎯 2. 各管道告警阈值清单</span>
+          </div>
+          <div id="params-pipe-list" style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 8px 0;">正在加载各管道阈值...</div>
+          </div>
+        </div>
+
+        <!-- 图像视觉与动能分析层 (高级设置 · 默认展开显眼呈现) -->
+        <details class="adv-accordion" open>
+          <summary>
+            <span>🔬 3. 图像视觉与动能分析层 (高级设置)</span>
+            <span style="font-size: 11px; color: #d2a8ff;">点击折叠 ▲</span>
+          </summary>
+          <div class="adv-content">
+            <!-- 1. EMA 动能滤波平滑系数 -->
+            <div class="adv-row">
+              <div class="adv-header">
+                <span>EMA 动能平滑指数系数 (α)</span>
+                <span id="val-ema" class="val-badge">0.75</span>
+              </div>
+              <input type="range" id="cfg-ema" class="slider-control" min="0.20" max="0.95" step="0.05" value="0.75" oninput="document.getElementById('val-ema').innerText=this.value">
+              <div class="hint-text">越大响应越敏锐快速，越小抗瞬时光照反光杂波越强 (推荐: 0.70 ~ 0.85)</div>
+            </div>
+
+            <!-- 2. 帧差二值化阈值 -->
+            <div class="adv-row">
+              <div class="adv-header">
+                <span>双帧差分二值化阈值 (Diff Thresh)</span>
+                <span id="val-diff" class="val-badge">12</span>
+              </div>
+              <input type="range" id="cfg-diff" class="slider-control" min="5" max="35" step="1" value="12" oninput="document.getElementById('val-diff').innerText=this.value">
+              <div class="hint-text">微小流动像素灵敏度，值越小对微弱水流越敏感 (推荐: 10 ~ 15)</div>
+            </div>
+
+            <!-- 3. 高斯滤波核大小 -->
+            <div class="adv-row">
+              <div class="adv-header">
+                <span>高斯滤波降噪核大小</span>
+              </div>
+              <select id="cfg-blur" class="styled-select">
+                <option value="3">3 × 3 (轻度平滑 · 高速响应)</option>
+                <option value="5" selected>5 × 5 (标准工业抗噪 · 默认推荐)</option>
+                <option value="7">7 × 7 (重度滤波 · 滤除强烈机械震颤)</option>
+              </select>
+              <div class="hint-text">消除相机感光芯片高频白噪与电机高频机械震颤</div>
+            </div>
+
+            <button class="btn btn-save-adv" onclick="saveVisionParams()">
+              ⚡ 立即热更新图像高级参数 (零重启生效)
+            </button>
+          </div>
+        </details>
+
+        <!-- 返回按钮 -->
+        <button class="btn btn-sub" style="margin-top: 4px;" onclick="switchSidebarTab('monitor')">
+          ‹ 返回实时监控仪表看板
+        </button>
+
+      </div>
+
+    </aside>
+  </main>
+
+  <script>
+    /* __SERVER_BOOTSTRAP_PLACEHOLDER__ */
+
+    const canvas = document.getElementById('draw-canvas');
+    const ctx = canvas.getContext('2d');
+    const streamImg = document.getElementById('stream-img');
+
+    // 智能视频流连接管理：后台标签页断流释放连接，前台标签页即时恢复 (解决浏览器单域名 6 最大并发连接耗尽问题)
+    let isStreamActive = false;
+    function setStreamActive(active) {
+      if (isStreamActive === active) return;
+      isStreamActive = active;
+      if (active) {
+        streamImg.src = "/video_feed?t=" + Date.now();
+      } else {
+        streamImg.src = "";
+      }
+    }
+
+    if (!document.hidden) {
+      setStreamActive(true);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        setStreamActive(false);
+      } else {
+        setStreamActive(true);
+        syncStatus();
+      }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      setStreamActive(false);
+    });
+
+    const PIPE_COLORS = ['#ffcc00', '#00ff80', '#00c8ff', '#ff66ff', '#64b4ff', '#ff9933'];
+
+    let isDrawing = false;
+    let startX = 0, startY = 0;
+    let currentBox = null;
+    let pipes = [];
+    let anchor = null;
+    let systemMode = "CALIBRATING";
+    let activeSidebarTab = "monitor";
+
+    // 全屏视角切换核心逻辑
+    function toggleFullscreen() {
+      const vp = document.getElementById('viewport-panel');
+      const isCurrentlyFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains('theater-mode'));
+
+      if (!isCurrentlyFs) {
+        if (vp.requestFullscreen) {
+          vp.requestFullscreen().catch(() => {
+            document.body.classList.add('theater-mode');
+            updateFsButtonLabels();
+          });
+        } else if (vp.webkitRequestFullscreen) {
+          vp.webkitRequestFullscreen();
+        } else {
+          document.body.classList.add('theater-mode');
+          updateFsButtonLabels();
+        }
+      } else {
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
+        document.body.classList.remove('theater-mode');
+        updateFsButtonLabels();
+      }
+    }
+
+    function updateFsButtonLabels() {
+      const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains('theater-mode'));
+      const fsBtn = document.getElementById('floating-fs-btn');
+      const topFsBtn = document.getElementById('top-fs-btn');
+      if (isFs) {
+        if (fsBtn) fsBtn.innerHTML = '✕ 退出全屏 (ESC)';
+        if (topFsBtn) topFsBtn.innerHTML = '✕ 退出全屏';
+        showToast("⛶ 已切换至 1080P 全屏监控视角 (按 ESC、按 F 或双击退出)");
+      } else {
+        if (fsBtn) fsBtn.innerHTML = '⛶ 全屏大屏视角';
+        if (topFsBtn) topFsBtn.innerHTML = '⛶ 全屏监控大屏';
+      }
+      setTimeout(renderAllOverlays, 100);
+    }
+
+    document.addEventListener('fullscreenchange', updateFsButtonLabels);
+    document.addEventListener('webkitfullscreenchange', updateFsButtonLabels);
+
+    // 双击画面快速全屏/退出全屏
+    document.getElementById('video-stage').addEventListener('dblclick', (e) => {
+      if (systemMode === 'CALIBRATING' && isDrawing) return;
+      toggleFullscreen();
+    });
+
+    // 选项卡切换函数
+    function switchSidebarTab(tabName) {
+      activeSidebarTab = tabName;
+      const btnMon = document.getElementById('tab-btn-monitor');
+      const btnPar = document.getElementById('tab-btn-params');
+      const cntMon = document.getElementById('tab-content-monitor');
+      const cntPar = document.getElementById('tab-content-params');
+
+      if (tabName === 'params') {
+        btnMon.classList.remove('active');
+        btnPar.classList.add('active');
+        cntMon.style.display = 'none';
+        cntPar.style.display = 'block';
+        updateParamsPipeListUI();
+      } else {
+        btnMon.classList.add('active');
+        btnPar.classList.remove('active');
+        cntMon.style.display = 'block';
+        cntPar.style.display = 'none';
+      }
+    }
+
+    // 吐司通知条
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast-msg');
+      document.getElementById('toast-text').innerText = msg;
+      el.classList.add('show');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove('show');
+      }, 2500);
+    }
+
+    function getCanvasCoordinates(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: Math.round((e.clientX - rect.left) * scaleX),
+        y: Math.round((e.clientY - rect.top) * scaleY)
+      };
+    }
+
+    // 标定模式下拉框
+    canvas.addEventListener('mousedown', (e) => {
+      if (systemMode === 'MONITORING') return;
+      const p = getCanvasCoordinates(e);
+      startX = p.x;
+      startY = p.y;
+      isDrawing = true;
+      currentBox = null;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isDrawing || systemMode === 'MONITORING') return;
+      const p = getCanvasCoordinates(e);
+      const x1 = Math.min(startX, p.x);
+      const y1 = Math.min(startY, p.y);
+      const w = Math.abs(p.x - startX);
+      const h = Math.abs(p.y - startY);
+      currentBox = { x1, y1, x2: x1 + w, y2: y1 + h, w, h };
+
+      document.getElementById('coord-info').innerText = 
+        `👉 鼠标选框: [${x1}, ${y1}, ${x1+w}, ${y1+h}]  尺寸: ${w} × ${h} px`;
+      document.getElementById('selection-status').innerText = 
+        `已拉取选框: ${w} × ${h} px，请按 1~6 或点击按钮绑定！`;
+
+      renderAllOverlays();
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (systemMode === 'MONITORING') return;
+      isDrawing = false;
+      renderAllOverlays();
+    });
+
+    // 统一渲染图层 (唯一高精度渲染源，绝对无双重框)
+    function renderAllOverlays() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 1. 绘制抗抖锚点 (如有)
+      if (anchor && anchor.enabled && anchor.roi) {
+        const [ax1, ay1, ax2, ay2] = anchor.roi;
+        const aw = ax2 - ax1, ah = ay2 - ay1;
+        ctx.strokeStyle = '#a371f7';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(ax1, ay1, aw, ah);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#a371f7';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillText(`⚓ 锚点 [已锁定] (${aw}x${ah})`, ax1, Math.max(22, ay1 - 8));
+      }
+
+      // 2. 绘制管道框与动能标签
+      pipes.forEach(p => {
+        let col = PIPE_COLORS[(p.id - 1) % PIPE_COLORS.length];
+        let stateTag = "";
+
+        if (systemMode === 'MONITORING') {
+          if (p.state === 2) {
+            col = '#f85149'; // 红色 ALARM
+            stateTag = ' [🚨 严重断流!]';
+          } else if (p.state === 1) {
+            col = '#d29922'; // 橙色 WARN
+            stateTag = ' [⚠️ 流量偏低]';
+          } else {
+            col = '#3fb950'; // 绿色 OK
+            stateTag = ' [OK 正常]';
+          }
+        }
+
+        ctx.strokeStyle = col;
+        ctx.lineWidth = (p.state === 2) ? 4 : 3;
+        ctx.strokeRect(p.x1, p.y1, p.w, p.h);
+
+        // 标签背景与文字
+        let tag = `Pipe ${p.id}: ${p.name}`;
+        if (systemMode === 'MONITORING') {
+          tag += ` | E:${(p.energy || 0).toFixed(1)} ${stateTag}`;
+        } else {
+          tag += ` [${p.w}x${p.h}] (阈值:${p.threshold}%)`;
+        }
+
+        ctx.font = 'bold 17px sans-serif';
+        const txtWidth = ctx.measureText(tag).width;
+        const tagY = Math.max(24, p.y1 - 6);
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(p.x1, tagY - 20, txtWidth + 12, 24);
+
+        ctx.fillStyle = col;
+        ctx.fillText(tag, p.x1 + 6, tagY - 3);
+      });
+
+      // 3. 正在画的临时选框 (仅标定模式)
+      if (systemMode === 'CALIBRATING' && currentBox && currentBox.w > 5 && currentBox.h > 5) {
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(currentBox.x1, currentBox.y1, currentBox.w, currentBox.h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#00ffff';
+        ctx.font = 'bold 16px Consolas, monospace';
+        ctx.fillText(`${currentBox.w}x${currentBox.h}`, currentBox.x1 + 4, currentBox.y1 + 20);
+      }
+    }
+
+    function bindPipe(id, defaultName, defaultTh) {
+      if (!currentBox || currentBox.w < 10) {
+        alert("⚠️ 请先按住鼠标左键在出水口上拖拽拉出一个框！");
+        return;
+      }
+      
+      const payload = {
+        id: id,
+        name: defaultName,
+        x1: currentBox.x1,
+        y1: currentBox.y1,
+        x2: currentBox.x2,
+        y2: currentBox.y2,
+        w: currentBox.w,
+        h: currentBox.h,
+        threshold: defaultTh,
+        relay_channel: id + 2,
+        energy: 15.0,
+        state: 0
+      };
+
+      const existIdx = pipes.findIndex(p => p.id === id);
+      if (existIdx >= 0) pipes[existIdx] = payload;
+      else pipes.push(payload);
+      pipes.sort((a, b) => a.id - b.id);
+
+      currentBox = null;
+      renderAllOverlays();
+      updatePipeListUI();
+
+      fetch(`/set_pipe?id=${id}&name=${encodeURIComponent(defaultName)}&x1=${payload.x1}&y1=${payload.y1}&x2=${payload.x2}&y2=${payload.y2}&th=${defaultTh}&rc=${id+2}`)
+        .then(() => showToast(`✅ Pipe ${id} 已成功绑定选框坐标！`))
+        .catch(() => {});
+    }
+
+    function setAnchor() {
+      if (!currentBox || currentBox.w < 10) {
+        alert("⚠️ 请先用鼠标在螺栓等固定构件上拉出一个 60~100 像素的小框！");
+        return;
+      }
+      anchor = {
+        enabled: true,
+        roi: [currentBox.x1, currentBox.y1, currentBox.x2, currentBox.y2]
+      };
+      currentBox = null;
+      renderAllOverlays();
+      updateAnchorUI();
+
+      fetch(`/set_anchor?x1=${anchor.roi[0]}&y1=${anchor.roi[1]}&x2=${anchor.roi[2]}&y2=${anchor.roi[3]}`)
+        .then(() => showToast("⚓ 抗抖锚点设置成功！"))
+        .catch(() => {});
+    }
+
+    function clearAnchor() {
+      anchor = { enabled: false, roi: [0, 0, 0, 0] };
+      renderAllOverlays();
+      updateAnchorUI();
+      fetch('/clear_anchor').then(() => showToast("已清空锚点，进入纯静态 0 锚点模式"));
+    }
+
+    function deletePipe(id) {
+      pipes = pipes.filter(p => p.id !== id);
+      renderAllOverlays();
+      updatePipeListUI();
+      updateParamsPipeListUI();
+      fetch(`/delete_pipe?id=${id}`).then(() => showToast(`已移除 Pipe ${id}`));
+    }
+
+    function clearAllPipes() {
+      if (!confirm("确认清空所有已标定管口吗？")) return;
+      pipes = [];
+      renderAllOverlays();
+      updatePipeListUI();
+      updateParamsPipeListUI();
+      fetch('/clear_pipes').then(() => showToast("已清空全部管口标定"));
+    }
+
+    // 快捷热更新单个管道阈值
+    function quickUpdateTh(pipeId, val) {
+      const th = parseFloat(val);
+      if (isNaN(th) || th <= 0) return;
+      fetch(`/api/set_threshold?id=${pipeId}&th=${th}`)
+        .then(r => r.json())
+        .then(() => {
+          showToast(`✅ Pipe ${pipeId} 告警阈值已热更新为 ${th}%`);
+          const p = pipes.find(x => x.id === pipeId);
+          if (p) p.threshold = th;
+          renderAllOverlays();
+          updateParamsPipeListUI();
+        });
+    }
+
+    // 保存核心业务决策参数
+    function saveBusinessParams() {
+      const alarmDur = parseFloat(document.getElementById('cfg-alarm-dur').value) || 2.0;
+      const recDur = parseFloat(document.getElementById('cfg-rec-dur').value) || 2.0;
+      const cooldown = parseFloat(document.getElementById('cfg-cooldown').value) || 60.0;
+
+      fetch(`/api/update_params?alarm_dur=${alarmDur}&rec_dur=${recDur}&cooldown=${cooldown}`)
+        .then(r => r.json())
+        .then(() => {
+          showToast(`💾 核心业务决策参数已热更新生效！`);
+        });
+    }
+
+    // 保存图像视觉高级参数
+    function saveVisionParams() {
+      const emaAlpha = parseFloat(document.getElementById('cfg-ema').value) || 0.75;
+      const diffTh = parseInt(document.getElementById('cfg-diff').value) || 12;
+      const blurSz = parseInt(document.getElementById('cfg-blur').value) || 5;
+
+      fetch(`/api/update_params?ema_alpha=${emaAlpha}&diff_th=${diffTh}&blur_sz=${blurSz}`)
+        .then(r => r.json())
+        .then(() => {
+          showToast(`⚡ 图像视觉算法高级参数已热更新生效！`);
+        });
+    }
+
+    function updatePipeListUI() {
+      document.getElementById('pipe-count-num').innerText = pipes.length;
+      const el = document.getElementById('pipe-list-container');
+      if (pipes.length === 0) {
+        el.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 12px 0; font-size: 12px;">暂无管口，请在左侧画面上框选...</div>';
+        return;
+      }
+      el.innerHTML = pipes.map(p => {
+        const col = PIPE_COLORS[(p.id - 1) % PIPE_COLORS.length];
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-card-sub);padding:6px 10px;border-radius:4px;border:1px solid var(--border-color);margin-bottom:4px;font-size:12px;">
+            <span style="display:flex;align-items:center;">
+              <span style="color:${col};margin-right:4px;">●</span>
+              <strong>P${p.id}</strong>: ${p.name}
+              <small style="color:var(--text-muted);margin-left:4px;">[${p.w}x${p.h}]</small>
+            </span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="color:var(--text-muted);font-size:11px;">阈值:</span>
+              <input type="number" step="0.5" min="0.5" max="30" class="th-quick-input" value="${p.threshold}" onchange="quickUpdateTh(${p.id}, this.value)">
+              <button class="del-icon-btn" onclick="deletePipe(${p.id})" title="删除">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 参数面板里的管道阈值清单
+    function updateParamsPipeListUI() {
+      const el = document.getElementById('params-pipe-list');
+      if (!el) return;
+      if (pipes.length === 0) {
+        el.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 8px 0;">暂无管口</div>';
+        return;
+      }
+      el.innerHTML = pipes.map(p => {
+        const col = PIPE_COLORS[(p.id - 1) % PIPE_COLORS.length];
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;padding:6px 10px;border-radius:5px;border:1px solid var(--border-color);font-size:12px;">
+            <span><span style="color:${col};">●</span> <strong>P${p.id}</strong>: ${p.name}</span>
+            <span style="display:flex;align-items:center;">
+              <span style="color:var(--text-muted);font-size:11px;">告警阈值:</span>
+              <input type="number" step="0.5" min="0.5" max="30" class="th-quick-input" value="${p.threshold}" onchange="quickUpdateTh(${p.id}, this.value)"> %
+            </span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateAnchorUI() {
+      const el = document.getElementById('anchor-info-card');
+      if (anchor && anchor.enabled) {
+        const [x1, y1, x2, y2] = anchor.roi;
+        el.innerHTML = `
+          <span style="color:#a371f7;">⚓ 锁定: [${x1},${y1}] (${x2-x1}x${y2-y1} px)</span>
+          <button class="del-icon-btn" onclick="clearAnchor()" title="清空锚点">✕</button>
+        `;
+      } else {
+        el.innerHTML = `<span>状态: 纯静态 0 锚点模式</span>`;
+      }
+    }
+
+    // 切换到监控模式
+    function startMonitoring() {
+      if (pipes.length === 0) {
+        alert("⚠️ 尚未标定任何管口！请先至少框选 1 根水管。");
+        return;
+      }
+      fetch('/start_monitoring').then(r => r.json()).then(res => {
+        if (res.status === 'ok') {
+          systemMode = 'MONITORING';
+          applyViewMode();
+          showToast("🚀 系统已正式进入监控防护阶段！");
+        }
+      });
+    }
+
+    // 切换到标定模式
+    function enterCalibration() {
+      fetch('/enter_calibrate').then(r => r.json()).then(() => {
+        systemMode = 'CALIBRATING';
+        applyViewMode();
+        switchSidebarTab('monitor');
+        showToast("⚙️ 系统已切换至标定模式，可重新画框。");
+      });
+    }
+
+    function toggleCutoff() {
+      fetch('/cutoff').then(r => r.json()).then(() => {
+        syncStatus();
+        showToast("已切换 2号管模拟断流演练状态！");
+      });
+    }
+
+    function loadHistory() {
+      fetch('/load_history').then(r => r.json()).then(res => {
+        if (res.status === 'ok') {
+          syncStatus();
+          showToast("📂 已成功恢复上次保存的历史配置！");
+        } else {
+          alert("未找到历史配置文件！");
+        }
+      });
+    }
+
+    // 根据模式切换界面显示 (标定面板 vs 监控面板)
+    function applyViewMode() {
+      const viewCalib = document.getElementById('view-calibration');
+      const viewMon = document.getElementById('view-monitoring');
+      const pill = document.getElementById('status-pill');
+      const dot = document.getElementById('status-dot');
+      const txt = document.getElementById('status-text');
+      const recalibTop = document.getElementById('recalib-top-btn');
+
+      if (systemMode === 'MONITORING') {
+        viewCalib.style.display = 'none';
+        viewMon.style.display = 'block';
+        pill.className = 'status-pill monitor';
+        dot.style.background = 'var(--accent-green)';
+        txt.innerText = '正式监控阶段 (实时防护中)';
+        recalibTop.style.display = 'block';
+        canvas.style.cursor = 'default';
+        document.getElementById('coord-info').innerText = '👉 实时防护中: 各管口动能动态计算生效 (双击画面或按 F 可全屏)';
+      } else {
+        viewCalib.style.display = 'block';
+        viewMon.style.display = 'none';
+        pill.className = 'status-pill calib';
+        dot.style.background = 'var(--accent-yellow)';
+        txt.innerText = '开机标定阶段 (请用鼠标画框)';
+        recalibTop.style.display = 'none';
+        canvas.style.cursor = 'crosshair';
+        document.getElementById('coord-info').innerText = '👉 标定阶段: 请按住鼠标左键在画面管口上拖拽拉框...';
+      }
+      renderAllOverlays();
+    }
+
+    // 统一应用服务端状态（动能、锚点、管口坐标与运行模式）
+    function applyServerData(data) {
+      if (!data) return;
+      pipes = data.pipes || [];
+      if (data.anchor_enabled) {
+        anchor = { enabled: true, roi: data.anchor_roi };
+      } else {
+        anchor = { enabled: false, roi: [0, 0, 0, 0] };
+      }
+      systemMode = data.mode || "CALIBRATING";
+      applyViewMode();
+
+      // 同步业务参数 (当输入框未处于输入焦点时更新)
+      const activeEl = document.activeElement;
+      const inpAlarm = document.getElementById('cfg-alarm-dur');
+      const inpRec = document.getElementById('cfg-rec-dur');
+      const inpCool = document.getElementById('cfg-cooldown');
+      if (activeEl !== inpAlarm && data.alarm_duration_sec !== undefined && inpAlarm) inpAlarm.value = data.alarm_duration_sec;
+      if (activeEl !== inpRec && data.recovery_duration_sec !== undefined && inpRec) inpRec.value = data.recovery_duration_sec;
+      if (activeEl !== inpCool && data.cooldown_sec !== undefined && inpCool) inpCool.value = data.cooldown_sec;
+
+      // 同步高级图像视觉参数 (当未处于焦点时更新)
+      const inpEma = document.getElementById('cfg-ema');
+      const inpDiff = document.getElementById('cfg-diff');
+      const inpBlur = document.getElementById('cfg-blur');
+      if (activeEl !== inpEma && data.ema_alpha !== undefined && inpEma) {
+        inpEma.value = data.ema_alpha;
+        const valEma = document.getElementById('val-ema');
+        if (valEma) valEma.innerText = data.ema_alpha;
+      }
+      if (activeEl !== inpDiff && data.diff_threshold !== undefined && inpDiff) {
+        inpDiff.value = data.diff_threshold;
+        const valDiff = document.getElementById('val-diff');
+        if (valDiff) valDiff.innerText = data.diff_threshold;
+      }
+      if (activeEl !== inpBlur && data.gaussian_blur_size !== undefined && inpBlur) {
+        inpBlur.value = data.gaussian_blur_size;
+      }
+
+      // 若在监控模式，更新动能仪表卡片
+      if (systemMode === 'MONITORING') {
+        const listEl = document.getElementById('mon-meters-list');
+        const cutBadge = document.getElementById('mon-cut-state');
+        if (cutBadge) {
+          if (data.cutoff_sim) {
+            cutBadge.innerText = '2号管演练断水中';
+            cutBadge.style.color = '#f85149';
+            cutBadge.style.background = 'rgba(248,81,73,0.2)';
+          } else {
+            cutBadge.innerText = '状态良好';
+            cutBadge.style.color = '#3fb950';
+            cutBadge.style.background = 'rgba(46,160,67,0.2)';
+          }
+        }
+
+        if (listEl) {
+          listEl.innerHTML = pipes.map(p => {
+            const energyVal = (p.energy || 0).toFixed(1);
+            let cardClass = "monitor-pipe-card";
+            let fillClass = "meter-bar-fill";
+            let stateText = "<span style='color:#3fb950;'>🟢 正常</span>";
+            let percent = Math.min(100, Math.max(0, (energyVal / 25.0) * 100));
+
+            if (p.state === 2) {
+              cardClass += " alarm";
+              fillClass += " alarm";
+              stateText = "<span style='color:#f85149;'>🚨 断流报警!</span>";
+            } else if (p.state === 1) {
+              cardClass += " warn";
+              fillClass += " warn";
+              stateText = "<span style='color:#d29922;'>⚠️ 动能偏低</span>";
+            }
+
+            return `
+              <div class="${cardClass}">
+                <div class="meter-header">
+                  <span>P${p.id}: ${p.name}</span>
+                  <span>${stateText}</span>
+                </div>
+                <div class="meter-bar-bg">
+                  <div class="${fillClass}" style="width: ${percent}%;"></div>
+                </div>
+                <div class="meter-footer">
+                  <span>当前动能 E: <strong style="color:#7ee787;">${energyVal}%</strong></span>
+                  <span style="display:flex;align-items:center;">
+                    告警阈值: 
+                    <input type="number" step="0.5" min="0.5" max="30" class="th-quick-input" value="${p.threshold}" onchange="quickUpdateTh(${p.id}, this.value)"> %
+                  </span>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+      } else {
+        updatePipeListUI();
+        updateAnchorUI();
+      }
+
+      if (activeSidebarTab === 'params') {
+        updateParamsPipeListUI();
+      }
+
+      renderAllOverlays();
+    }
+
+    // 周期性拉取服务端状态与动能 (带防并发积压与超时控制)
+    let isSyncing = false;
+    function syncStatus() {
+      if (document.hidden) return; // 后台标签页不消耗网络轮询
+      if (isSyncing) return;
+      isSyncing = true;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+
+      fetch('/api/status', { signal: controller.signal })
+        .then(r => r.json())
+        .then(data => {
+          applyServerData(data);
+        })
+        .catch(() => {})
+        .finally(() => {
+          clearTimeout(timer);
+          isSyncing = false;
+        });
+    }
+
+    // 页面加载瞬间，若服务端注入了启动状态，直接零延迟初始化！彻底根除新开标签页框失效闪烁问题！
+    if (typeof window.__INITIAL_SERVER_STATE__ !== 'undefined' && window.__INITIAL_SERVER_STATE__) {
+      applyServerData(window.__INITIAL_SERVER_STATE__);
+    }
+
+    // 键盘快捷键 (支持 F 全屏，1~6 绑管，A 设锚点)
+    window.addEventListener('keydown', (e) => {
+      // 避免输入框打字触发按键
+      const isInputActive = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT');
+
+      if (!isInputActive) {
+        if (e.key === 'f' || e.key === 'F') {
+          toggleFullscreen();
+          return;
+        }
+      }
+
+      if (systemMode === 'CALIBRATING' && !isInputActive) {
+        if (e.key >= '1' && e.key <= '6') {
+          const id = parseInt(e.key);
+          const names = ['', '左侧主粗管(大流量)', '中间细黄管(直流水)', '中偏右银管(散流水)', '右侧弯管口(直流水)', '最右顺壁管(贴壁细流)', '备用预留管'];
+          const ths = [0, 4.0, 3.5, 3.5, 3.5, 2.5, 3.0];
+          bindPipe(id, names[id], ths[id]);
+        } else if (e.key === 'a' || e.key === 'A') {
+          setAnchor();
+        } else if (e.key === 'Enter') {
+          startMonitoring();
+        }
+      }
+    });
+
+    setInterval(syncStatus, 800);
+    if (!document.hidden) {
+      syncStatus();
+    }
+  </script>
+</body>
+</html>
