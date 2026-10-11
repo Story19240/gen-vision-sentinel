@@ -5,6 +5,11 @@
 #include <iomanip>
 #include <thread>
 #include <cstring>
+#include <fstream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #include <curl/curl.h>
 
 // libcurl 写数据回调
@@ -69,12 +74,55 @@ bool FeishuClient::http_post(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L); // 允许自签证书
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
-    const char* env_proxy = getenv("https_proxy");
+    const char* env_proxy = getenv("FEISHU_PROXY");
+    if (!env_proxy) env_proxy = getenv("https_proxy");
     if (!env_proxy) env_proxy = getenv("http_proxy");
     if (env_proxy && strlen(env_proxy) > 0) {
         curl_easy_setopt(curl, CURLOPT_PROXY, env_proxy);
     } else {
-        curl_easy_setopt(curl, CURLOPT_PROXY, "http://192.168.55.100:10811");
+        // 自动探测代理主机: 优先检查活跃局域网主机 (如 192.168.1.150:10811 或 192.168.55.100:10811)
+        static std::string detected_proxy = "";
+        static bool proxy_checked = false;
+        if (!proxy_checked) {
+            proxy_checked = true;
+            std::vector<std::string> candidates = {"192.168.1.150", "192.168.55.100"};
+            std::ifstream arp("/proc/net/arp");
+            if (arp.is_open()) {
+                std::string line;
+                std::getline(arp, line);
+                while (std::getline(arp, line)) {
+                    std::stringstream ss(line);
+                    std::string ip, hw, fl;
+                    if (ss >> ip >> hw >> fl) {
+                        if (fl == "0x2" && ip.find("192.168.0.") == std::string::npos && ip.rfind(".64") == std::string::npos) {
+                            candidates.push_back(ip);
+                        }
+                    }
+                }
+            }
+            for (const auto& ip : candidates) {
+                int sock = socket(AF_INET, SOCK_STREAM, 0);
+                if (sock >= 0) {
+                    struct sockaddr_in addr{};
+                    addr.sin_family = AF_INET;
+                    addr.sin_port = htons(10811);
+                    inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
+                    struct timeval tv{0, 200000}; // 200ms
+                    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+                    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                        detected_proxy = "http://" + ip + ":10811";
+                        close(sock);
+                        std::cout << "🌐 [FeishuClient-C++] 自动发现局域网代理网关: " << detected_proxy << std::endl;
+                        break;
+                    }
+                    close(sock);
+                }
+            }
+        }
+        if (!detected_proxy.empty()) {
+            curl_easy_setopt(curl, CURLOPT_PROXY, detected_proxy.c_str());
+        }
     }
 
     CURLcode res = curl_easy_perform(curl);
@@ -160,12 +208,17 @@ bool FeishuClient::send_card_sync(const std::string& title,
     card_ss << "{\"tag\":\"note\",\"elements\":[{\"tag\":\"plain_text\",\"content\":\"⏱ 触发时间: " 
             << time_ss.str() << " | 设备视觉哨兵原生 C++ 核心驱动\"}]}";
 
-    // 底部大屏跳转按钮
-    if (!web_monitor_url_.empty()) {
+    // 底部大屏跳转按钮 (线程安全读取最新热更新的跳转地址)
+    std::string cur_monitor_url;
+    {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        cur_monitor_url = web_monitor_url_;
+    }
+    if (!cur_monitor_url.empty()) {
         card_ss << ",{\"tag\":\"action\",\"actions\":[{\"tag\":\"button\",";
         card_ss << "\"text\":{\"tag\":\"plain_text\",\"content\":\"🔍 查看现场实时大屏\"},";
         card_ss << "\"type\":\"" << (color == "red" ? "primary" : "default") << "\",";
-        card_ss << "\"url\":\"" << web_monitor_url_ << "\"}]}";
+        card_ss << "\"url\":\"" << cur_monitor_url << "\"}]}";
     }
 
     card_ss << "]}";

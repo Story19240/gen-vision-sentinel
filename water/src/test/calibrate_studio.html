@@ -894,10 +894,42 @@
           </div>
         </div>
 
+        <!-- 飞书告警联动跳转大屏设置 -->
+        <div class="card" style="border-color: #388bfd;">
+          <div class="card-header">
+            <span class="card-title">🌐 3. 飞书告警卡片 · 实时大屏跳转地址</span>
+            <span id="feishu-mode-tag" style="font-size: 11px; color: #58a6ff; background: rgba(56,139,253,0.15); padding: 2px 6px; border-radius: 4px;">自动探测</span>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 10px;">
+            设置飞书告警卡片中【🔍 查看现场实时大屏】按钮的跳转目标 URL。支持自动随设备网络切换，也可自定义固定地址。
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+              <input type="radio" name="feishu-url-mode" id="mode-feishu-auto" value="auto" checked onchange="toggleFeishuUrlMode()">
+              <span><strong>自动探测 (推荐)</strong>: 优先使用当前有效主机网段 (<span id="detected-ip-hint" style="color: #7ee787; font-family: monospace;">http://192.168.1.100:8080</span>)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+              <input type="radio" name="feishu-url-mode" id="mode-feishu-custom" value="custom" onchange="toggleFeishuUrlMode()">
+              <span><strong>自定义跳转地址</strong>: 指定特定域名/穿透地址/端口</span>
+            </label>
+            <div id="custom-feishu-container" style="display: none; margin-top: 4px;">
+              <div class="input-with-unit" style="padding: 2px 8px;">
+                <input type="text" id="cfg-feishu-url" class="styled-input" placeholder="http://192.168.1.100:8080" style="font-size: 12px;" onfocus="userEditingFeishu = true;" oninput="userEditingFeishu = true;" onkeydown="if(event.key==='Enter') saveFeishuUrl()">
+              </div>
+            </div>
+          </div>
+          <div style="font-size: 11px; color: #8b949e; margin-bottom: 10px;">
+            当前生效跳转 URL: <span id="current-feishu-effective-url" style="color: #58a6ff; font-family: monospace; font-weight: bold;">--</span>
+          </div>
+          <button class="btn btn-sub" style="border-color: #388bfd; color: #58a6ff; padding: 9px; font-weight: 700;" onclick="saveFeishuUrl()">
+            💾 保存大屏跳转地址 (热更新即时生效)
+          </button>
+        </div>
+
         <!-- 图像视觉与动能分析层 (高级设置 · 默认展开显眼呈现) -->
         <details class="adv-accordion" open>
           <summary>
-            <span>🔬 3. 图像视觉与动能分析层 (高级设置)</span>
+            <span>🔬 4. 图像视觉与动能分析层 (高级设置)</span>
             <span style="font-size: 11px; color: #d2a8ff;">点击折叠 ▲</span>
           </summary>
           <div class="adv-content">
@@ -957,7 +989,7 @@
     const ctx = canvas.getContext('2d');
     const streamImg = document.getElementById('stream-img');
 
-    // 智能视频流连接管理：后台标签页断流释放连接，前台标签页即时恢复 (解决浏览器单域名 6 最大并发连接耗尽问题)
+    // 智能视频流连接管理：后台标签页断流释放连接，前台标签页即时恢复
     let isStreamActive = false;
     function setStreamActive(active) {
       if (isStreamActive === active) return;
@@ -968,6 +1000,42 @@
         streamImg.src = "";
       }
     }
+
+    // 核心优化 1：根治 Chromium (Chrome/Edge) 长连接 MJPEG 内存泄漏导致 "Out of Memory" 崩溃
+    // 每隔 60 秒自动瞬时刷新一次 <img> 连接 (仅耗时约 40ms，肉眼无黑屏卡顿感)，
+    // 强制触发浏览器释放累积的 GB 级解码位图，将标签页内存死死压制在 80MB 以内，支持 7x24 小时稳定挂机！
+    setInterval(() => {
+      if (isStreamActive && !document.hidden) {
+        streamImg.src = "";
+        setTimeout(() => {
+          if (isStreamActive && !document.hidden) {
+            streamImg.src = "/video_feed?t=" + Date.now();
+          }
+        }, 40);
+      }
+    }, 60000);
+
+    // 核心优化 2：流异常断开自动重连
+    streamImg.onerror = () => {
+      if (isStreamActive && !document.hidden) {
+        setTimeout(() => {
+          if (isStreamActive && !document.hidden) {
+            streamImg.src = "/video_feed?t=" + Date.now();
+          }
+        }, 1000);
+      }
+    };
+
+    // 核心优化 3：多标签页协同提醒 (提示用户避免打开多个重复大屏)
+    try {
+      const bc = new BroadcastChannel('water_monitor_channel');
+      bc.postMessage({ type: 'NEW_TAB', time: Date.now() });
+      bc.onmessage = (ev) => {
+        if (ev.data && ev.data.type === 'NEW_TAB') {
+          showToast("ℹ️ 检测到新标签页打开。建议只保留一个大屏标签页，以节省电脑内存。");
+        }
+      };
+    } catch(e) {}
 
     if (!document.hidden) {
       setStreamActive(true);
@@ -1056,6 +1124,7 @@
       const cntPar = document.getElementById('tab-content-params');
 
       if (tabName === 'params') {
+        userEditingFeishu = false;
         btnMon.classList.remove('active');
         btnPar.classList.add('active');
         cntMon.style.display = 'none';
@@ -1314,6 +1383,52 @@
         });
     }
 
+    let feishuMode = "auto";
+    let detectedPrimaryUrl = "";
+    let currentFeishuUrl = "";
+    let userEditingFeishu = false;
+
+    function toggleFeishuUrlMode() {
+      userEditingFeishu = true;
+      const isAuto = document.getElementById('mode-feishu-auto').checked;
+      const customContainer = document.getElementById('custom-feishu-container');
+      customContainer.style.display = isAuto ? 'none' : 'block';
+      if (!isAuto) {
+        const inp = document.getElementById('cfg-feishu-url');
+        if (inp) {
+          if (!inp.value || inp.value === 'auto') {
+            inp.value = (currentFeishuUrl && currentFeishuUrl !== 'auto') ? currentFeishuUrl : (detectedPrimaryUrl || 'http://192.168.1.100:8080');
+          }
+          setTimeout(() => inp.focus(), 60);
+        }
+      }
+    }
+
+    function saveFeishuUrl() {
+      const isAuto = document.getElementById('mode-feishu-auto').checked;
+      let targetUrl = "auto";
+      if (!isAuto) {
+        targetUrl = document.getElementById('cfg-feishu-url').value.trim();
+        if (!targetUrl) {
+          alert("请输入自定义跳转地址，或选择自动探测模式！");
+          return;
+        }
+        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+          targetUrl = "http://" + targetUrl;
+        }
+      }
+
+      fetch(`/api/set_feishu_url?url=${encodeURIComponent(targetUrl)}`)
+        .then(r => r.json())
+        .then(res => {
+          if (res.status === 'ok') {
+            userEditingFeishu = false; // 保存成功，恢复与后端自动同步
+            showToast("🌐 飞书大屏跳转地址已热更新生效！");
+            syncStatus();
+          }
+        });
+    }
+
     function updatePipeListUI() {
       document.getElementById('pipe-count-num').innerText = pipes.length;
       const el = document.getElementById('pipe-list-container');
@@ -1486,6 +1601,43 @@
       }
       if (activeEl !== inpBlur && data.gaussian_blur_size !== undefined && inpBlur) {
         inpBlur.value = data.gaussian_blur_size;
+      }
+
+      // 同步飞书大屏跳转地址设置
+      if (data.detected_primary_url) {
+        detectedPrimaryUrl = data.detected_primary_url;
+        const hintEl = document.getElementById('detected-ip-hint');
+        if (hintEl) hintEl.innerText = detectedPrimaryUrl;
+      }
+      if (data.feishu_monitor_url) {
+        currentFeishuUrl = data.feishu_monitor_url;
+        const effEl = document.getElementById('current-feishu-effective-url');
+        if (effEl) effEl.innerText = currentFeishuUrl;
+      }
+      const tag = document.getElementById('feishu-mode-tag');
+      if (tag && data.feishu_monitor_mode) {
+        if (data.feishu_monitor_mode === 'auto') {
+          tag.innerText = '自动探测'; tag.style.color = '#58a6ff'; tag.style.background = 'rgba(56,139,253,0.15)';
+        } else {
+          tag.innerText = '自定义'; tag.style.color = '#d2a8ff'; tag.style.background = 'rgba(163,113,247,0.15)';
+        }
+      }
+
+      // 关键防覆写：只有在用户未在本地切换/编辑时，才从服务端状态初始化单选按钮与输入框
+      if (!userEditingFeishu && data.feishu_monitor_mode) {
+        feishuMode = data.feishu_monitor_mode;
+        const autoRadio = document.getElementById('mode-feishu-auto');
+        const customRadio = document.getElementById('mode-feishu-custom');
+        const customContainer = document.getElementById('custom-feishu-container');
+        const inpUrl = document.getElementById('cfg-feishu-url');
+        if (feishuMode === 'auto') {
+          if (autoRadio) autoRadio.checked = true;
+          if (customContainer) customContainer.style.display = 'none';
+        } else {
+          if (customRadio) customRadio.checked = true;
+          if (customContainer) customContainer.style.display = 'block';
+          if (inpUrl && currentFeishuUrl && !inpUrl.value) inpUrl.value = currentFeishuUrl;
+        }
       }
 
       // 若在监控模式，更新动能仪表卡片

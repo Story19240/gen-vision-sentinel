@@ -25,11 +25,19 @@ water/src/
 
 ## 正式服务编译与运行指南 (Jetson AGX Xavier)
 
+> [!IMPORTANT]
+> **开发板执行规范**：板端所有编译与运行命令必须在 `agent_work` tmux 会话中执行 (`tmux a -t agent_work`)，严禁直接在非会话普通终端运行。
+
 ```bash
-# 1. 编译正式监控推流服务
+# 1. 登录开发板并附着至统一运维会话
+ssh root@192.168.1.100
+tmux a -t agent_work
+
+# 2. 编译正式监控推流服务
 cd /data/workspace/water/src
 make clean && make -j4
 
-# 2. 启动服务 (自动广播 8080 Web大屏)
-./water_monitor_server
+# 3. 启动服务 (自动监听并广播 8080 Web大屏: http://192.168.1.100:8080)
+unset DISPLAY && ./water_monitor_server
 ```
+

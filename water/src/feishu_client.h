@@ -53,6 +53,17 @@ public:
                         const std::string& color, 
                         const std::vector<FeishuField>& fields);
 
+    // 热更新大屏跳转 URL (支持线程安全动态切换)
+    void set_web_monitor_url(const std::string& url) {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        web_monitor_url_ = url;
+    }
+
+    std::string get_web_monitor_url() {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        return web_monitor_url_;
+    }
+
 private:
     std::string app_id_;
     std::string app_secret_;

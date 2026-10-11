@@ -26,6 +26,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <memory>
+#include <set>
 
 #include "../feishu_client.h"
 #include "../relay_client.h"
@@ -167,6 +168,83 @@ struct AnchorTracker {
     }
 };
 
+// 自动化探测并获取当前最优先的监控大屏 IP 地址 (千兆以太网优先，排除专用 Modbus 硬件网段)
+inline std::string detect_primary_monitor_ip() {
+    struct ifaddrs *ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == -1) {
+        return "192.168.1.100";
+    }
+
+    std::string relay_ip = env_or("RELAY_HOST", "192.168.0.7");
+    std::string relay_prefix = "";
+    size_t last_dot = relay_ip.rfind('.');
+    if (last_dot != std::string::npos) {
+        relay_prefix = relay_ip.substr(0, last_dot + 1);
+    }
+
+    std::set<std::string> active_subnets;
+    std::ifstream arp_file("/proc/net/arp");
+    if (arp_file.is_open()) {
+        std::string line;
+        std::getline(arp_file, line); // 跳过表头
+        while (std::getline(arp_file, line)) {
+            std::stringstream ss(line);
+            std::string ip, hw_type, flags, hw_addr, mask, dev;
+            if (ss >> ip >> hw_type >> flags >> hw_addr >> mask >> dev) {
+                int flag_val = 0;
+                try { flag_val = std::stoi(flags, nullptr, 16); } catch (...) {}
+                if (flag_val & 0x2) {
+                    size_t d = ip.rfind('.');
+                    if (d != std::string::npos) {
+                        active_subnets.insert(ip.substr(0, d + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    std::string candidate_eth = "";
+    std::string candidate_usb = "";
+    std::string candidate_other = "";
+
+    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        char host[NI_MAXHOST];
+        sockaddr_in* pAddr = (sockaddr_in*)ifa->ifa_addr;
+        inet_ntop(AF_INET, &(pAddr->sin_addr), host, NI_MAXHOST);
+        std::string ip_str = host;
+        std::string ifname = ifa->ifa_name ? ifa->ifa_name : "";
+
+        if (ifname == "lo" || ip_str.find("127.") == 0) continue;
+
+        size_t d = ip_str.rfind('.');
+        std::string subnet = (d != std::string::npos) ? ip_str.substr(0, d + 1) : "";
+
+        // 排除专用硬件总线 (如 192.168.0.x)
+        if (!relay_prefix.empty() && subnet == relay_prefix) continue;
+
+        bool is_active = (active_subnets.find(subnet) != active_subnets.end());
+
+        if (ifname.find("eth") != std::string::npos) {
+            if (is_active && candidate_eth.empty()) {
+                candidate_eth = ip_str;
+            } else if (candidate_eth.empty()) {
+                candidate_eth = ip_str;
+            }
+        } else if (ifname.find("usb") != std::string::npos || ifname.find("l4tbr") != std::string::npos) {
+            if (candidate_usb.empty()) candidate_usb = ip_str;
+        } else {
+            if (candidate_other.empty()) candidate_other = ip_str;
+        }
+    }
+    freeifaddrs(ifaddr);
+
+    if (!candidate_eth.empty()) return candidate_eth;
+    if (!candidate_usb.empty()) return candidate_usb;
+    if (!candidate_other.empty()) return candidate_other;
+    return "192.168.1.100";
+}
+
 // 管道分析单元结构
 struct PipeUnit {
     int id = 1;
@@ -195,12 +273,24 @@ public:
         load_feishu_config();
 
         feishu_ = std::make_shared<FeishuClient>();
+        std::string primary_ip = detect_primary_monitor_ip();
+        std::string auto_detected_url = "http://" + primary_ip + ":8080";
+
+        std::string final_web_url = env_or("FEISHU_WEB_MONITOR_URL", "");
+        if (final_web_url.empty()) final_web_url = feishu_web_monitor_url_;
+        if (final_web_url.empty() || final_web_url == "auto") {
+            final_web_url = auto_detected_url;
+            feishu_web_monitor_url_ = "auto";
+        }
+
         feishu_->init(feishu_app_id_.empty() ? env_or("FEISHU_APP_ID") : feishu_app_id_,
                      feishu_app_secret_.empty() ? env_or("FEISHU_APP_SECRET") : feishu_app_secret_,
                      feishu_receive_id_.empty() ? env_or("FEISHU_RECEIVE_ID") : feishu_receive_id_,
                      feishu_receive_id_type_.empty() ? env_or("FEISHU_RECEIVE_ID_TYPE", "chat_id") : feishu_receive_id_type_,
-                     feishu_web_monitor_url_.empty() ? env_or("FEISHU_WEB_MONITOR_URL", "http://192.168.55.1:8080") : feishu_web_monitor_url_);
-        std::cout << "[飞书联动] 纯 C++ 异步飞书告警客户端已成功装载！" << std::endl;
+                     final_web_url);
+        std::cout << "[飞书联动] 纯 C++ 异步飞书告警客户端已装载！(模式: " 
+                  << (feishu_web_monitor_url_ == "auto" ? "自动探测" : "自定义") 
+                  << " | 大屏跳转: " << final_web_url << ")" << std::endl;
 
         relay_ = std::make_shared<RelayClient>();
         relay_->init(env_or("RELAY_HOST", "192.168.0.7"),
@@ -231,7 +321,7 @@ public:
     std::string feishu_app_secret_ = "";
     std::string feishu_receive_id_type_ = "chat_id";
     std::string feishu_receive_id_ = "";
-    std::string feishu_web_monitor_url_ = "http://192.168.55.1:8080";
+    std::string feishu_web_monitor_url_ = "";
 
     void load_feishu_config() {
         std::ifstream in(config_path_);
@@ -253,6 +343,26 @@ public:
     float ema_alpha_ = 0.75f;
     int diff_threshold_ = 12;
     int gaussian_blur_size_ = 5;
+    bool master_alarm_active_ = false;
+
+    // 动态热更新飞书大屏跳转地址 (支持 auto 与 自定义模式，零重启即改即生效)
+    void update_feishu_url(const std::string& url) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        std::string actual_url;
+        if (url.empty() || url == "auto") {
+            feishu_web_monitor_url_ = "auto";
+            actual_url = "http://" + detect_primary_monitor_ip() + ":8080";
+            std::cout << "\n🌐 [飞书联动热更新] 大屏跳转地址已切换为【自动探测模式】: " << actual_url << std::endl;
+        } else {
+            feishu_web_monitor_url_ = url;
+            actual_url = url;
+            std::cout << "\n🌐 [飞书联动热更新] 大屏跳转地址已切换为【自定义模式】: " << actual_url << std::endl;
+        }
+        if (feishu_) {
+            feishu_->set_web_monitor_url(actual_url);
+        }
+        save_config();
+    }
 
     // 热更新单个管道阈值
     void update_pipe_threshold(int id, float th) {
@@ -468,7 +578,9 @@ public:
             out << "    \"app_secret\": \"" << (feishu_app_secret_.empty() ? env_or("FEISHU_APP_SECRET") : feishu_app_secret_) << "\",\n";
             out << "    \"receive_id_type\": \"" << (feishu_receive_id_type_.empty() ? env_or("FEISHU_RECEIVE_ID_TYPE", "chat_id") : feishu_receive_id_type_) << "\",\n";
             out << "    \"receive_id\": \"" << (feishu_receive_id_.empty() ? env_or("FEISHU_RECEIVE_ID") : feishu_receive_id_) << "\",\n";
-            out << "    \"web_monitor_url\": \"" << (feishu_web_monitor_url_.empty() ? env_or("FEISHU_WEB_MONITOR_URL", "http://192.168.55.1:8080") : feishu_web_monitor_url_) << "\"\n";
+            std::string save_url = feishu_web_monitor_url_;
+            if (save_url.empty()) save_url = "auto";
+            out << "    \"web_monitor_url\": \"" << save_url << "\"\n";
             out << "  },\n";
             out << "  \"anchor\": {\n";
             out << "    \"enabled\": " << (tracker_.enabled ? "true" : "false") << ",\n";
@@ -608,7 +720,10 @@ public:
                         int relay_ch = (p.relay_channel > 0) ? p.relay_channel : (p.id + 2);
                         if (relay_) {
                             relay_->set_channel(relay_ch, true);
-                            relay_->set_channel(2, true); // Y2 总告警
+                            if (!master_alarm_active_) {
+                                relay_->set_channel(2, true); // Y2 总告警 (防并发重复触发)
+                                master_alarm_active_ = true;
+                            }
                         }
 
                         if (feishu_) {
@@ -643,7 +758,10 @@ public:
                                     break;
                                 }
                             }
-                            if (!other_alarm) relay_->set_channel(2, false);
+                            if (!other_alarm) {
+                                relay_->set_channel(2, false);
+                                master_alarm_active_ = false;
+                            }
                         }
 
                         if (feishu_) {
@@ -711,6 +829,18 @@ public:
         ss << "  \"ema_alpha\": " << ema_alpha_ << ",\n";
         ss << "  \"diff_threshold\": " << diff_threshold_ << ",\n";
         ss << "  \"gaussian_blur_size\": " << gaussian_blur_size_ << ",\n";
+
+        std::string primary_ip = detect_primary_monitor_ip();
+        std::string auto_detected_url = "http://" + primary_ip + ":8080";
+        std::string eff_feishu_url = (feishu_web_monitor_url_.empty() || feishu_web_monitor_url_ == "auto") 
+                                     ? auto_detected_url : feishu_web_monitor_url_;
+        std::string feishu_mode = (feishu_web_monitor_url_.empty() || feishu_web_monitor_url_ == "auto") 
+                                  ? "auto" : "custom";
+
+        ss << "  \"feishu_monitor_mode\": \"" << feishu_mode << "\",\n";
+        ss << "  \"feishu_monitor_url\": \"" << eff_feishu_url << "\",\n";
+        ss << "  \"detected_primary_url\": \"" << auto_detected_url << "\",\n";
+
         ss << "  \"pipes\": [\n";
         for (size_t i = 0; i < pipes_.size(); ++i) {
             const auto& p = pipes_[i];
@@ -745,7 +875,7 @@ private:
 
 static WaterAnalyzer g_analyzer;
 
-// 动态打印开发板真实网络 IP
+// 自动化探测并打印真正可用的 Web 看板访问地址 (排除专用硬件总线，排除无活跃对端的死网段)
 void print_available_urls(int port) {
     struct ifaddrs *ifaddr = nullptr;
     if (getifaddrs(&ifaddr) == -1) {
@@ -753,27 +883,84 @@ void print_available_urls(int port) {
         return;
     }
 
-    std::cout << "\n========================================================" << std::endl;
-    std::cout << "  ⚡ 冷却水视觉监控与在线标定看板服务已启动! ⚡" << std::endl;
-    std::cout << "  👉 请在 Windows 电脑浏览器中打开以下地址开展鼠标画框：" << std::endl;
+    // 1. 读取环境中的专用硬件设备 IP (例如继电器) 与配置的监控 URL
+    std::string relay_ip = env_or("RELAY_HOST", "192.168.0.7");
+    std::string feishu_url = env_or("FEISHU_WEB_MONITOR_URL", "");
 
-    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr) continue;
-        if (ifa->ifa_addr->sa_family == AF_INET) {
-            char host[NI_MAXHOST];
-            sockaddr_in* pAddr = (sockaddr_in*)ifa->ifa_addr;
-            inet_ntop(AF_INET, &(pAddr->sin_addr), host, NI_MAXHOST);
-            std::string ifname = ifa->ifa_name;
-            if (ifname != "lo") {
-                std::string desc = ifname;
-                if (ifname.find("eth") != std::string::npos) desc += " (工业有线网口)";
-                else if (ifname.find("usb") != std::string::npos || ifname.find("l4tbr") != std::string::npos) desc += " (USB 调试通道 - 推荐)";
-                else if (ifname.find("wlan") != std::string::npos) desc += " (Wi-Fi)";
+    // 提取继电器所在 /24 网段前缀 (如 "192.168.0.")
+    std::string relay_prefix = "";
+    size_t last_dot = relay_ip.rfind('.');
+    if (last_dot != std::string::npos) {
+        relay_prefix = relay_ip.substr(0, last_dot + 1);
+    }
 
-                std::cout << "  👉 在线交互看板:  http://" << host << ":" << port << "  [" << desc << "]" << std::endl;
+    // 2. 自动化读取内核 ARP 活跃对端表 (/proc/net/arp)，检测哪些子网真正有在线主机 (PC/摄像机)
+    std::set<std::string> active_subnets;
+    std::ifstream arp_file("/proc/net/arp");
+    if (arp_file.is_open()) {
+        std::string line;
+        std::getline(arp_file, line); // 跳过表头
+        while (std::getline(arp_file, line)) {
+            std::stringstream ss(line);
+            std::string ip, hw_type, flags, hw_addr, mask, dev;
+            if (ss >> ip >> hw_type >> flags >> hw_addr >> mask >> dev) {
+                // flags 包含 0x2 (ATF_COM) 表示物理连通且有活跃交互
+                int flag_val = 0;
+                try { flag_val = std::stoi(flags, nullptr, 16); } catch (...) {}
+                if (flag_val & 0x2) {
+                    size_t d = ip.rfind('.');
+                    if (d != std::string::npos) {
+                        active_subnets.insert(ip.substr(0, d + 1));
+                    }
+                }
             }
         }
     }
+
+    std::cout << "\n========================================================" << std::endl;
+    std::cout << "  ⚡ 冷却水视觉监控与在线标定看板服务已启动! ⚡" << std::endl;
+    std::cout << "  👉 实时大屏可用访问地址 (已自动探测有效网段):" << std::endl;
+
+    int printed_count = 0;
+    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        char host[NI_MAXHOST];
+        sockaddr_in* pAddr = (sockaddr_in*)ifa->ifa_addr;
+        inet_ntop(AF_INET, &(pAddr->sin_addr), host, NI_MAXHOST);
+        std::string ip_str = host;
+        std::string ifname = ifa->ifa_name ? ifa->ifa_name : "";
+
+        if (ifname == "lo" || ip_str.find("127.") == 0) continue;
+
+        size_t d = ip_str.rfind('.');
+        std::string subnet = (d != std::string::npos) ? ip_str.substr(0, d + 1) : "";
+
+        // 自动化规则 1: 如果该 IP 与 Relay 处于同一个专用硬件子网，属于专用控制总线，不作为 Web 大屏展示
+        if (!relay_prefix.empty() && subnet == relay_prefix) {
+            continue; 
+        }
+
+        // 自动化规则 2: 必须在内核 ARP 表中有活跃通信对端，或者是显式配置的飞书跳转 URL
+        bool is_active_subnet = (active_subnets.find(subnet) != active_subnets.end());
+        bool is_configured_url = (!feishu_url.empty() && feishu_url.find(ip_str) != std::string::npos);
+
+        if (!is_active_subnet && !is_configured_url) {
+            continue; // 自动排除无主机的死网段 (如旧的 192.168.137.x)
+        }
+
+        std::string desc = ifname;
+        if (ifname.find("eth") != std::string::npos) desc = "千兆工业交换机网络 - 推荐";
+        else if (ifname.find("usb") != std::string::npos || ifname.find("l4tbr") != std::string::npos) desc = "USB 调试直连通道";
+        else if (ifname.find("wlan") != std::string::npos) desc = "Wi-Fi 无线网络";
+
+        std::cout << "  👉 在线交互看板:  http://" << ip_str << ":" << port << "  [" << desc << "]" << std::endl;
+        printed_count++;
+    }
+
+    if (printed_count == 0) {
+        std::cout << "  👉 在线交互看板:  http://192.168.1.100:" << port << "  [工业有线网络]" << std::endl;
+    }
+
     std::cout << "========================================================\n" << std::endl;
     freeifaddrs(ifaddr);
 }
@@ -1360,7 +1547,45 @@ void http_server_worker(int port) {
                 return;
             }
 
-            // 13. 首页或标定页访问 -> 返回全功能交互式 HTML (动态注入当前系统最新状态与锚点/管口坐标)
+            // 13. 更新飞书告警跳转大屏 URL /api/set_feishu_url?url=...
+            if (req_str.find("/api/set_feishu_url?") != std::string::npos) {
+                size_t q_pos = req_str.find("/api/set_feishu_url?");
+                if (q_pos != std::string::npos) {
+                    std::string qs = req_str.substr(q_pos + 20);
+                    size_t sp = qs.find(' ');
+                    if (sp != std::string::npos) qs = qs.substr(0, sp);
+
+                    std::string raw_url = "";
+                    size_t u_pos = qs.find("url=");
+                    if (u_pos != std::string::npos) {
+                        raw_url = qs.substr(u_pos + 4);
+                        size_t amp = raw_url.find('&');
+                        if (amp != std::string::npos) raw_url = raw_url.substr(0, amp);
+                    }
+                    // URL 解码
+                    std::string decoded_url = "";
+                    for (size_t i = 0; i < raw_url.length(); ++i) {
+                        if (raw_url[i] == '%' && i + 2 < raw_url.length()) {
+                            try {
+                                int val = std::stoi(raw_url.substr(i + 1, 2), nullptr, 16);
+                                decoded_url += (char)val;
+                                i += 2;
+                            } catch (...) {
+                                decoded_url += raw_url[i];
+                            }
+                        } else if (raw_url[i] == '+') {
+                            decoded_url += ' ';
+                        } else {
+                            decoded_url += raw_url[i];
+                        }
+                    }
+                    g_analyzer.update_feishu_url(decoded_url);
+                }
+                send_json("{\"status\":\"ok\"}");
+                return;
+            }
+
+            // 14. 首页或标定页访问 -> 返回全功能交互式 HTML (动态注入当前系统最新状态与锚点/管口坐标)
             bool is_page_req = false;
             if (req_str.find("/api/") == std::string::npos &&
                 req_str.find("/video_feed") == std::string::npos &&
@@ -1447,7 +1672,7 @@ void http_server_worker(int port) {
                     if (send(client_fd, (char*)buf.data(), buf.size(), MSG_NOSIGNAL) <= 0) break;
                     if (send(client_fd, "\r\n", 2, MSG_NOSIGNAL) <= 0) break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(33)); // 约 30 FPS
+                std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 约 20 FPS (大幅降低 Chrome/Edge 内存解码堆积压力)
             }
             close(client_fd);
         }).detach();
