@@ -174,7 +174,7 @@ class SparkDetector:
             falling_components=0,
             candidate=False,
             event_triggered=False,
-            level="light",
+            level="none",
             contact_v_mean=0.0,
             reference_v_mean=0.0,
             candidate_duration_ms=0,
@@ -365,7 +365,10 @@ class SparkDetector:
             falling_bright_pixels >= self.heavy_bright_pixels
             or falling_components >= self.heavy_components
         )
-        level = "heavy" if event_triggered and heavy_level else "light"
+        if event_triggered:
+            level = "heavy" if heavy_level else "light"
+        else:
+            level = "none"
 
         return DetectionResult(
             timestamp_ms=timestamp,

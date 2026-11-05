@@ -55,7 +55,8 @@ def make_background(w: int, h: int, seed: int) -> np.ndarray:
 
     noise = rng.normal(0.0, 0.9, size=(height, width)).astype(np.float32)
     background += noise
-    return np.clip(np.rint(background), 0, 255).astype(np.uint8)
+    grayscale = np.clip(np.rint(background), 0, 255).astype(np.uint8)
+    return np.repeat(grayscale[:, :, np.newaxis], 3, axis=2)
 
 
 def _phase_modulation(phase: float) -> float:
@@ -155,7 +156,7 @@ def add_falling_sparks(
 
 def _drift_frame(frame: np.ndarray, frame_index: int, fps: float) -> np.ndarray:
     phase = float(frame_index) / max(float(fps), 1.0)
-    offset = int(round(4.0 + 3.0 * math.sin(2.0 * math.pi * phase / 2.5)))
+    offset = int(round(10.0 * math.sin(2.0 * math.pi * phase / 2.5)))
     drifted = frame.astype(np.int16) + offset
     return np.clip(drifted, 0, 255).astype(np.uint8)
 
