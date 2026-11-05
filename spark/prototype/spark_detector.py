@@ -224,22 +224,36 @@ class SparkDetector:
             return self._empty_result(timestamp)
 
         frame_h, frame_w = frame.shape[:2]
+        roi_configs = {
+            "contact_roi": self.config.get("contact_roi"),
+            "reference_roi": self.config.get("reference_roi"),
+            "falling_roi": self.config.get("falling_roi"),
+        }
+        for roi_name, roi_config in roi_configs.items():
+            roi = clip_roi(
+                select_roi_profile(roi_config, frame.shape),
+                frame.shape,
+            )
+            if roi is None:
+                raise ValueError(
+                    f"invalid spark config: ROI '{roi_name}' is missing or invalid "
+                    f"for frame size {frame_w}x{frame_h}"
+                )
+
         contact_roi = clip_roi(
-            select_roi_profile(self.config.get("contact_roi"), frame.shape),
+            select_roi_profile(roi_configs["contact_roi"], frame.shape),
             frame.shape,
         )
         reference_roi = clip_roi(
-            select_roi_profile(self.config.get("reference_roi"), frame.shape),
+            select_roi_profile(roi_configs["reference_roi"], frame.shape),
             frame.shape,
         )
         falling_roi = clip_roi(
-            select_roi_profile(self.config.get("falling_roi"), frame.shape),
+            select_roi_profile(roi_configs["falling_roi"], frame.shape),
             frame.shape,
         )
         if contact_roi is None or reference_roi is None or falling_roi is None:
-            self._candidate_start_ms = None
-            self._candidate_latched = False
-            return self._empty_result(timestamp)
+            raise ValueError("invalid spark config: ROI resolution failed")
 
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         v_channel = hsv[:, :, 2]

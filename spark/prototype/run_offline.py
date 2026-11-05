@@ -7,7 +7,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sys
+from copy import deepcopy
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
@@ -92,6 +94,28 @@ def _load_config(path: Path) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("config root must be a JSON object")
     return config
+
+
+def validate_roi_config(
+    config: dict[str, Any], frame_shape: tuple[int, ...]
+) -> None:
+    """校验三类 ROI 能按首帧尺寸解析并裁剪为有效区域。"""
+
+    for roi_name in ("contact_roi", "reference_roi", "falling_roi"):
+        if roi_name not in config:
+            raise ValueError(
+                f"invalid spark config: missing required ROI key '{roi_name}'"
+            )
+        roi = clip_roi(
+            select_roi_profile(config[roi_name], frame_shape),
+            frame_shape,
+        )
+        if roi is None:
+            frame_h, frame_w = int(frame_shape[0]), int(frame_shape[1])
+            raise ValueError(
+                f"invalid spark config: ROI '{roi_name}' is invalid for frame "
+                f"size {frame_w}x{frame_h}"
+            )
 
 
 def _read_image(path: Path) -> tuple[list[np.ndarray], float]:
@@ -268,7 +292,7 @@ def _write_annotated(
         raise ValueError(f"could not write annotated image: {path}")
 
 
-def _write_baseline(path: Path, results: list[DetectionResult]) -> None:
+def _calculate_baseline(results: list[DetectionResult]) -> dict[str, Any]:
     baseline_metrics = (
         "rel_saturation",
         "rel_flicker",
@@ -289,9 +313,72 @@ def _write_baseline(path: Path, results: list[DetectionResult]) -> None:
             "p99_9": p99_9,
             "suggested_threshold_mean_plus_5_sigma": mean + 5.0 * std,
         }
+    return baseline
+
+
+def _write_baseline(path: Path, baseline: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as baseline_file:
         json.dump(baseline, baseline_file, indent=2, ensure_ascii=False)
         baseline_file.write("\n")
+
+
+def _write_calibrated_config(
+    path: Path,
+    source_config: dict[str, Any],
+    baseline: dict[str, Any],
+    baseline_source: str,
+    frame_count: int,
+) -> None:
+    calibrated = deepcopy(source_config)
+
+    thresholds = calibrated.get("thresholds")
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+    else:
+        thresholds = dict(thresholds)
+    thresholds["rel_saturation"] = baseline["rel_saturation"][
+        "suggested_threshold_mean_plus_5_sigma"
+    ]
+    thresholds["flicker"] = baseline["rel_flicker"][
+        "suggested_threshold_mean_plus_5_sigma"
+    ]
+
+    level_thresholds = calibrated.get("level_thresholds")
+    if not isinstance(level_thresholds, dict):
+        level_thresholds = {}
+    else:
+        level_thresholds = dict(level_thresholds)
+    level_thresholds["heavy_bright_pixels"] = math.ceil(
+        baseline["falling_bright_pixels"][
+            "suggested_threshold_mean_plus_5_sigma"
+        ]
+    )
+
+    calibrated["thresholds"] = thresholds
+    calibrated["level_thresholds"] = level_thresholds
+    calibrated["_comment"] = (
+        f"由 run_offline.py --baseline 自动生成。基线输入：{baseline_source}；"
+        f"本次统计帧数：{frame_count}。阈值按相机各自标定，不可跨相机套用；"
+        "使用前必须核对本文件中的 ROI 与目标相机画面一致。"
+    )
+    calibrated["calibration"] = {
+        metric_name: {
+            "mean": baseline[metric_name]["mean"],
+            "std": baseline[metric_name]["std"],
+            "suggested": baseline[metric_name][
+                "suggested_threshold_mean_plus_5_sigma"
+            ],
+        }
+        for metric_name in (
+            "rel_saturation",
+            "rel_flicker",
+            "falling_bright_pixels",
+        )
+    }
+
+    with path.open("w", encoding="utf-8") as config_file:
+        json.dump(calibrated, config_file, indent=2, ensure_ascii=False)
+        config_file.write("\n")
 
 
 def main() -> int:
@@ -299,6 +386,9 @@ def main() -> int:
     try:
         config = _load_config(Path(args.config).expanduser())
         frames, fps = _load_source(args)
+        if not frames:
+            raise ValueError("input contains no frames")
+        validate_roi_config(config, frames[0].shape)
         results = _run_detector(frames, fps, config)
         output_dir = Path(args.output).expanduser()
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -334,7 +424,20 @@ def main() -> int:
             )
 
         if args.baseline:
-            _write_baseline(output_dir / "baseline.json", results)
+            baseline = _calculate_baseline(results)
+            _write_baseline(output_dir / "baseline.json", baseline)
+            baseline_source = (
+                str(Path(args.input).expanduser())
+                if args.input
+                else f"synthetic scenario '{args.scenario}'"
+            )
+            _write_calibrated_config(
+                output_dir / "calibrated_config.json",
+                config,
+                baseline,
+                baseline_source,
+                len(results),
+            )
 
         print(f"processed {len(results)} frame(s) at {fps:.3f} FPS")
         print(f"events: {summary['event_count']}")
