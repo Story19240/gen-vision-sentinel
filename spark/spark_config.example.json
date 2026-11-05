@@ -1,0 +1,44 @@
+{
+  "_comment": "火花检测离线原型配置。ROI 均为占位示例，待现场标定；检测器按输入画面尺寸选择 sample 或 synthetic。confirm_duration_ms=200 是原型默认值，待项目主确认。",
+  "contact_roi": {
+    "sample": [75, 430, 676, 470],
+    "synthetic": [100, 200, 540, 232]
+  },
+  "reference_roi": {
+    "sample": [75, 120, 676, 160],
+    "synthetic": [100, 80, 540, 112]
+  },
+  "falling_roi": {
+    "sample": [300, 470, 460, 800],
+    "synthetic": [240, 232, 400, 420]
+  },
+  "camera": {
+    "exposure_us": null,
+    "gain_db": null,
+    "_comment": "曝光时间与增益占位，待现场根据正常画面锁定 AE、AGC、AWB 后填入"
+  },
+  "v_sat_threshold": 240,
+  "hue_blue_white": [100, 130],
+  "hue_orange_yellow": [5, 25],
+  "use_relative": true,
+  "thresholds": {
+    "rel_saturation": 0.01,
+    "flicker": 0.5,
+    "color_match_ratio": 0.5
+  },
+  "confirm_duration_ms": 200,
+  "level_thresholds": {
+    "heavy_bright_pixels": 20,
+    "heavy_components": 2
+  },
+  "record_pre_sec": 10,
+  "record_post_sec": 10,
+  "trend": {
+    "daily_count_file": "spark/recordings/daily_suspect_counts.csv",
+    "warning_sigma": 5.0,
+    "consecutive_days": 3
+  },
+  "relay_channel": 1,
+  "relay_trip_enabled": false,
+  "cooldown_sec": 60
+}
