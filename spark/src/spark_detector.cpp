@@ -149,4 +149,86 @@ DetectionResult make_empty_result(std::int64_t timestamp_ms) {
     return result;
 }
 
+SparkDetector::SparkDetector(const JsonValue& config, double fps)
+    : config_(std::make_shared<JsonValue>(config)) {
+    fps_ = fps > 0.0 ? fps : 25.0;
+    v_sat_threshold_ = 240;
+    use_relative_ = true;
+    rel_saturation_threshold_ = kDefaultRelSaturation;
+    flicker_threshold_ = kDefaultFlicker;
+    color_match_threshold_ = kDefaultColorMatchRatio;
+    heavy_bright_pixels_ = kDefaultHeavyBrightPixels;
+    heavy_components_ = kDefaultHeavyComponents;
+    confirm_duration_ms_ = kDefaultConfirmDurationMs;
+    window_frames_ = std::max(2, static_cast<int>(std::lround(fps_ * 0.5)));
+
+    if (const JsonValue* value = config_->find("v_sat_threshold")) {
+        if (value->is_number()) {
+            v_sat_threshold_ = static_cast<int>(value->as_double());
+        }
+    }
+    if (const JsonValue* value = config_->find("use_relative")) {
+        if (value->is_boolean()) use_relative_ = value->as_bool();
+    }
+    if (const JsonValue* thresholds = config_->find("thresholds")) {
+        if (thresholds->is_object()) {
+            if (const JsonValue* item = thresholds->find("rel_saturation")) {
+                if (item->is_number()) rel_saturation_threshold_ = item->as_double();
+            }
+            if (const JsonValue* item = thresholds->find("flicker")) {
+                if (item->is_number()) flicker_threshold_ = item->as_double();
+            }
+            if (const JsonValue* item = thresholds->find("color_match_ratio")) {
+                if (item->is_number()) color_match_threshold_ = item->as_double();
+            }
+        }
+    }
+    if (const JsonValue* thresholds = config_->find("level_thresholds")) {
+        if (thresholds->is_object()) {
+            if (const JsonValue* item = thresholds->find("heavy_bright_pixels")) {
+                if (item->is_number()) heavy_bright_pixels_ = static_cast<int>(item->as_double());
+            }
+            if (const JsonValue* item = thresholds->find("heavy_components")) {
+                if (item->is_number()) heavy_components_ = static_cast<int>(item->as_double());
+            }
+        }
+    }
+    if (const JsonValue* value = config_->find("confirm_duration_ms")) {
+        if (value->is_number()) {
+            confirm_duration_ms_ = std::max<std::int64_t>(
+                0, static_cast<std::int64_t>(value->as_double()));
+        }
+    }
+}
+
+void SparkDetector::reset() {
+    contact_v_history_.clear();
+    reference_v_history_.clear();
+    candidate_start_valid_ = false;
+    candidate_start_ms_ = 0;
+    candidate_latched_ = false;
+    last_timestamp_valid_ = false;
+    last_timestamp_ms_ = 0;
+    frame_index_ = 0;
+}
+
+void SparkDetector::ensure_luts() {
+    const JsonValue* blue = config_->find("hue_blue_white");
+    if (blue != nullptr && blue->is_array() && blue->as_array().size() >= 2) {
+        hue_blue_white_[0] = blue->as_array()[0].as_double();
+        hue_blue_white_[1] = blue->as_array()[1].as_double();
+    } else {
+        hue_blue_white_[0] = kDefaultHueBlueWhite[0];
+        hue_blue_white_[1] = kDefaultHueBlueWhite[1];
+    }
+    const JsonValue* orange = config_->find("hue_orange_yellow");
+    if (orange != nullptr && orange->is_array() && orange->as_array().size() >= 2) {
+        hue_orange_yellow_[0] = orange->as_array()[0].as_double();
+        hue_orange_yellow_[1] = orange->as_array()[1].as_double();
+    } else {
+        hue_orange_yellow_[0] = kDefaultHueOrangeYellow[0];
+        hue_orange_yellow_[1] = kDefaultHueOrangeYellow[1];
+    }
+}
+
 }  // namespace spark

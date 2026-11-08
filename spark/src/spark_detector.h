@@ -74,6 +74,7 @@ public:
     SparkDetector(const JsonValue& config, double fps);
 
     void reset();
+    void ensure_luts();
     DetectionResult process_frame(
         const std::uint8_t* bgr,
         int width,
@@ -91,6 +92,8 @@ private:
     double rel_saturation_threshold_;
     double flicker_threshold_;
     double color_match_threshold_;
+    double hue_blue_white_[2] = {100.0, 130.0};
+    double hue_orange_yellow_[2] = {5.0, 25.0};
     int heavy_bright_pixels_;
     int heavy_components_;
     std::int64_t confirm_duration_ms_;
