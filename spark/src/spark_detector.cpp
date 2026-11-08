@@ -110,7 +110,7 @@ ResolvedRoi resolve_roi(
     return clip_roi(select_roi_profile(roi_config, frame_width, frame_height), frame_width, frame_height);
 }
 
-void normalize_frame(
+bool normalize_frame(
     const std::uint8_t* bgr,
     int width,
     int height,
@@ -121,13 +121,13 @@ void normalize_frame(
     if (bgr == nullptr || width <= 0 || height <= 0 || channels < 3) {
         out_width = 0;
         out_height = 0;
-        return;
+        return false;
     }
     if (channels == 3) {
         output.assign(bgr, bgr + static_cast<std::size_t>(width) * height * 3);
         out_width = width;
         out_height = height;
-        return;
+        return true;
     }
     output.clear();
     output.reserve(static_cast<std::size_t>(width) * height * 3);
@@ -139,8 +139,9 @@ void normalize_frame(
             output.push_back(row[x * channels + 2]);
         }
     }
-    out_width = width;
-    out_height = height;
+        out_width = width;
+        out_height = height;
+        return true;
 }
 
 DetectionResult make_empty_result(std::int64_t timestamp_ms) {

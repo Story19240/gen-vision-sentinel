@@ -69,6 +69,15 @@ ResolvedRoi resolve_roi(
     int frame_width,
     int frame_height);
 
+bool normalize_frame(
+    const std::uint8_t* bgr,
+    int width,
+    int height,
+    int channels,
+    std::vector<std::uint8_t>& output,
+    int& out_width,
+    int& out_height);
+
 class SparkDetector {
 public:
     SparkDetector(const JsonValue& config, double fps);
