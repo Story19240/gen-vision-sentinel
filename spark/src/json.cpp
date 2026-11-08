@@ -593,4 +593,14 @@ JsonValue parse_json(const std::string& text) {
     return Parser(text).parse();
 }
 
+JsonValue load_json_file(const std::string& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw std::runtime_error("could not open config file: " + path);
+    std::string text(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    if (input.bad()) throw std::runtime_error("could not read config file: " + path);
+    return parse_json(text);
+}
+
 }  // namespace spark
