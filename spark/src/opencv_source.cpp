@@ -130,11 +130,12 @@ void write_annotated(
         static_cast<std::size_t>(frame.width) * frame.height * 3) {
         throw std::runtime_error("cannot annotate an invalid frame");
     }
-    cv::Mat image(
+    cv::Mat source(
         frame.height,
         frame.width,
         CV_8UC3,
         const_cast<std::uint8_t*>(frame.bgr.data()));
+    cv::Mat image = source.clone();
     draw_roi(image, config.find("contact_roi"), "CONTACT", cv::Scalar(0, 220, 0));
     draw_roi(image, config.find("reference_roi"), "REFERENCE", cv::Scalar(255, 180, 0));
     draw_roi(image, config.find("falling_roi"), "FALLING", cv::Scalar(0, 165, 255));

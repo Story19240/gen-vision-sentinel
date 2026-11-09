@@ -103,6 +103,8 @@ private:
     double color_match_threshold_;
     double hue_blue_white_[2] = {100.0, 130.0};
     double hue_orange_yellow_[2] = {5.0, 25.0};
+    bool hue_blue_white_valid_ = true;
+    bool hue_orange_yellow_valid_ = true;
     int heavy_bright_pixels_;
     int heavy_components_;
     std::int64_t confirm_duration_ms_;

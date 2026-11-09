@@ -49,9 +49,9 @@ double parse_double(const std::string& text) {
 int parse_int(const std::string& text) {
     std::size_t consumed = 0;
     const long long value = std::stoll(text, &consumed);
-    if (consumed != text.size() || value < 1 ||
+    if (consumed != text.size() || value < static_cast<long long>(std::numeric_limits<int>::min()) ||
         value > static_cast<long long>(std::numeric_limits<int>::max())) {
-        throw std::invalid_argument("expected a positive integer: " + text);
+        throw std::invalid_argument("expected an integer: " + text);
     }
     return static_cast<int>(value);
 }
@@ -63,6 +63,16 @@ std::int64_t parse_int64(const std::string& text) {
         throw std::invalid_argument("expected an integer: " + text);
     }
     return static_cast<std::int64_t>(value);
+}
+
+std::int64_t python_round_half_even(double value) {
+    const double lower = std::floor(value);
+    const double fraction = value - lower;
+    if (fraction > 0.5) return static_cast<std::int64_t>(lower + 1.0);
+    if (fraction < 0.5) return static_cast<std::int64_t>(lower);
+    return static_cast<std::int64_t>(lower) % 2 == 0
+        ? static_cast<std::int64_t>(lower)
+        : static_cast<std::int64_t>(lower + 1.0);
 }
 
 Options parse_options(int argc, char** argv) {
@@ -157,7 +167,7 @@ int main(int argc, char** argv) {
         std::vector<spark::SyntheticFrame> frames;
         double fps = 25.0;
         if (!options.scenario.empty()) {
-            fps = options.fps > 0.0 ? options.fps : 25.0;
+            fps = options.fps != 0.0 ? options.fps : 25.0;
             frames = spark::make_sequence(
                 options.scenario,
                 options.frames,
@@ -192,8 +202,8 @@ int main(int argc, char** argv) {
         results.reserve(frames.size());
         for (std::size_t index = 0; index < frames.size(); ++index) {
             const spark::SyntheticFrame& frame = frames[index];
-            const std::int64_t timestamp_ms = static_cast<std::int64_t>(
-                std::llround(static_cast<double>(index) * 1000.0 / fps));
+            const std::int64_t timestamp_ms = python_round_half_even(
+                static_cast<double>(index) * 1000.0 / fps);
             results.push_back(detector.process_frame(
                 frame.bgr.data(),
                 frame.width,

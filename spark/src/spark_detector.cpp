@@ -48,8 +48,10 @@ ResolvedRoi as_roi(const JsonValue* value) {
 }
 
 bool hue_in_range(int hue, const double bounds[2]) {
-    const double low = std::fmod(bounds[0], 180.0);
-    const double high = std::fmod(bounds[1], 180.0);
+    double low = std::fmod(bounds[0], 180.0);
+    double high = std::fmod(bounds[1], 180.0);
+    if (low < 0.0) low += 180.0;
+    if (high < 0.0) high += 180.0;
     const double value = static_cast<double>(hue);
     if (low <= high) {
         return value >= low && value <= high;
@@ -65,6 +67,16 @@ double mean_frame_delta(const std::deque<double>& values) {
         sum += std::abs(*current - *previous);
     }
     return sum / static_cast<double>(values.size() - 1);
+}
+
+int python_round_half_even(double value) {
+    const double lower = std::floor(value);
+    const double fraction = value - lower;
+    if (fraction > 0.5) return static_cast<int>(lower + 1.0);
+    if (fraction < 0.5) return static_cast<int>(lower);
+    return static_cast<int>(lower) % 2 == 0
+        ? static_cast<int>(lower)
+        : static_cast<int>(lower + 1.0);
 }
 
 int count_components_8(const std::vector<std::uint8_t>& mask, int width, int height) {
@@ -125,7 +137,7 @@ ResolvedRoi select_roi_profile(
     }
 
     const ResolvedRoi& preferred = frame_width >= frame_height ? synthetic : sample;
-    const ResolvedRoi& fallback = preferred.valid == synthetic.valid ? sample : synthetic;
+    const ResolvedRoi& fallback = &preferred == &synthetic ? sample : synthetic;
     if (preferred.valid) return preferred;
     return fallback;
 }
@@ -254,7 +266,7 @@ SparkDetector::SparkDetector(const JsonValue& config, double fps)
     heavy_bright_pixels_ = kDefaultHeavyBrightPixels;
     heavy_components_ = kDefaultHeavyComponents;
     confirm_duration_ms_ = kDefaultConfirmDurationMs;
-    window_frames_ = std::max(2, static_cast<int>(std::lround(fps_ * 0.5)));
+    window_frames_ = std::max(2, python_round_half_even(fps_ * 0.5));
 
     if (const JsonValue* value = config_->find("v_sat_threshold")) {
         if (value->is_number()) {
@@ -386,8 +398,9 @@ DetectionResult SparkDetector::process_frame(
             contact_sum += static_cast<std::size_t>(value);
             if (value >= v_sat_threshold_) ++contact_sat_pixels;
             if (value < v_sat_threshold_) continue;
-            const bool blue = hue_in_range(hue, hue_blue_white_) && saturation <= 120;
-            const bool orange =
+            const bool blue = hue_blue_white_valid_ &&
+                hue_in_range(hue, hue_blue_white_) && saturation <= 120;
+            const bool orange = hue_orange_yellow_valid_ &&
                 hue_in_range(hue, hue_orange_yellow_) && saturation >= 80;
             if (blue) ++blue_count;
             if (orange) ++orange_count;
@@ -498,20 +511,36 @@ DetectionResult SparkDetector::process_frame(
 
 void SparkDetector::ensure_luts() {
     const JsonValue* blue = config_->find("hue_blue_white");
-    if (blue != nullptr && blue->is_array() && blue->as_array().size() >= 2) {
-        hue_blue_white_[0] = blue->as_array()[0].as_double();
-        hue_blue_white_[1] = blue->as_array()[1].as_double();
-    } else {
+    if (blue == nullptr) {
         hue_blue_white_[0] = kDefaultHueBlueWhite[0];
         hue_blue_white_[1] = kDefaultHueBlueWhite[1];
+        hue_blue_white_valid_ = true;
+    } else if (blue->is_array() && blue->as_array().size() >= 2 &&
+               blue->as_array()[0].is_number() && blue->as_array()[1].is_number()) {
+        hue_blue_white_[0] = blue->as_array()[0].as_double();
+        hue_blue_white_[1] = blue->as_array()[1].as_double();
+        hue_blue_white_valid_ = true;
+    } else if (blue->is_array() && blue->as_array().size() < 2) {
+        hue_blue_white_valid_ = false;
+    } else {
+        throw SparkError(
+            "invalid spark config: 'hue_blue_white' must be a two-number array");
     }
     const JsonValue* orange = config_->find("hue_orange_yellow");
-    if (orange != nullptr && orange->is_array() && orange->as_array().size() >= 2) {
-        hue_orange_yellow_[0] = orange->as_array()[0].as_double();
-        hue_orange_yellow_[1] = orange->as_array()[1].as_double();
-    } else {
+    if (orange == nullptr) {
         hue_orange_yellow_[0] = kDefaultHueOrangeYellow[0];
         hue_orange_yellow_[1] = kDefaultHueOrangeYellow[1];
+        hue_orange_yellow_valid_ = true;
+    } else if (orange->is_array() && orange->as_array().size() >= 2 &&
+               orange->as_array()[0].is_number() && orange->as_array()[1].is_number()) {
+        hue_orange_yellow_[0] = orange->as_array()[0].as_double();
+        hue_orange_yellow_[1] = orange->as_array()[1].as_double();
+        hue_orange_yellow_valid_ = true;
+    } else if (orange->is_array() && orange->as_array().size() < 2) {
+        hue_orange_yellow_valid_ = false;
+    } else {
+        throw SparkError(
+            "invalid spark config: 'hue_orange_yellow' must be a two-number array");
     }
 }
 
