@@ -168,7 +168,7 @@
 2. **离线输入输出**：支持视频与图片输入、`--fps` 覆盖、合成场景、种子、帧数、`--baseline`；输出 `metrics.csv`、`summary.json`、合成/图片 `annotated.png`、可选 `baseline.json` / `calibrated_config.json`。
 3. **配置和错误**：配置解析器只接受严格 JSON 对象；缺少或非法 `contact_roi`/`reference_roi`/`falling_roi` 在写结果前报错并退出 2；`calibrated_config.json` 结构可直接传入。
 4. **直接对拍**：C++ 与 Python 对同一素材分别输出 metrics，再按 `frame_index`、各字段、事件列表、等级和配色比较；浮点先按统一小误差，后追足位。
-5. **复用边界**：离线版不链接 water 源文件，不引入 OpenCV/curl 依赖；生产接入时再抽流和飞书公共模块。复用不改变现有 water 进程和端口。
+5. **复用边界**：离线版不链接 water 源文件；检测核心不依赖 OpenCV，完整图片/视频读取使用 OpenCV 4.x 兼容 API，不引入 curl。生产接入时再抽流和飞书公共模块。复用不改变现有 water 进程和端口。
 6. **工作假设标识**：所有按默认先行的设计项都写“待项目主最终确认”；离线实现不因此扩成生产系统。
 
 ## 5. 工具链结论与遗留
