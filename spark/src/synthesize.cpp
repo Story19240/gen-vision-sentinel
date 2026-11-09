@@ -33,7 +33,7 @@ struct RgbColor {
 };
 
 RgbColor spark_color(const std::string& color_type) {
-    if (color_type == "blue_white") return {190.0, 200.0, 255.0};
+    if (color_type == "blue_white") return {255.0, 200.0, 190.0};
     if (color_type == "orange_yellow") return {15.0, 105.0, 255.0};
     throw std::invalid_argument("unsupported color_type: " + color_type);
 }
@@ -228,6 +228,9 @@ SyntheticSequence make_sequence(
     const int start_frame = std::max(1, static_cast<int>(std::llround(frame_rate * 0.2)));
     const int spark_frames = std::max(2, static_cast<int>(std::llround(frame_rate * 0.6)));
     const int end_frame = std::min(frame_count - 1, start_frame + spark_frames - 1);
+    const int effect_end_frame = scenario == "short_flash"
+        ? std::min(start_frame + 1, frame_count - 1)
+        : end_frame;
     const double contact_center_x = (kSyntheticContactRoi[0] + kSyntheticContactRoi[2]) / 2.0;
     const double contact_center_y = (kSyntheticContactRoi[1] + kSyntheticContactRoi[3]) / 2.0;
     const double reference_center_x = (kSyntheticReferenceRoi[0] + kSyntheticReferenceRoi[2]) / 2.0;
@@ -261,7 +264,7 @@ SyntheticSequence make_sequence(
         if ((scenario == "blue_white_spark" ||
              scenario == "orange_spark_falling" ||
              scenario == "short_flash") &&
-            frame_index >= start_frame && frame_index <= end_frame) {
+            frame_index >= start_frame && frame_index <= effect_end_frame) {
             const double phase = (frame_index - start_frame) * 0.25;
             const std::string color_type = scenario == "orange_spark_falling"
                 ? "orange_yellow"
