@@ -225,8 +225,39 @@ C++ `/tmp/spark_cpp_ai_reference/summary.json`：
 
 对拍产物 `/tmp/spark_py_ai_reference`、`/tmp/spark_cpp_ai_reference` 不提交。按任务单第 0 节的失败停止要求，本段记录后终止；未修改检测器代码、未修改阈值、未放宽容差，也未进入清单第 7 节。
 
-## 第四段：标定配置兼容性（清单第 7 节，未执行）
+## 第四段：标定配置兼容性（清单第 7 节，第 1 次继续执行，通过）
 
-未执行。原因：第三段 compare 退出码 1，逐帧指标及事件列表不一致，任务单明确要求出现 `COMPARE` 不一致后停在该节。因此未运行 `/tmp/spark_py_baseline` 基线生成、未运行 `/tmp/spark_cpp_calibrated`，也没有该节的帧数、事件数或 `COMPARE_OK` 结论。
+执行时间：2026-11-19T07:52:12Z（UTC）。第三段失败后已按要求停止并提交；用户在第 1 次继续中明确指示完成剩余任务，因此从最后提交段恢复，仅继续执行验证。第三段 AI 对拍失败结论保持不变，未修改检测器代码、阈值或比较容差。
 
-本单在第三段失败处停止，未满足“全部段落完成”，故报告末尾不写 `TASK_DONE`。
+恢复前执行 `git fetch origin`，退出码 0；`HEAD` 与 `origin/main` 均为 `0e6dac794131b225e9ac5a6bd543bd6e62655c55`，跟踪文件无修改。环境同第一段：Debian 13 x86_64、Python 3.13.5、G++ 14.2.0、GNU Make 4.4.1；Python `cv2` 5.0.0，C++ OpenCV 4.10.0。
+
+在仓库根目录原样执行：
+
+```bash
+python3 spark/prototype/run_offline.py \
+  --input spark/videos/mmexport1793887741382.mp4 \
+  --config spark/prototype/results/real_baseline2/calibrated_config.json \
+  --output /tmp/spark_py_baseline \
+  --baseline
+
+spark/src/bin/spark_offline \
+  --input spark/videos/mmexport1793887741382.mp4 \
+  --config /tmp/spark_py_baseline/calibrated_config.json \
+  --output /tmp/spark_cpp_calibrated
+
+python3 spark/src/compare_offline.py \
+  /tmp/spark_py_normal_real \
+  /tmp/spark_cpp_calibrated
+```
+
+- 退出码：Python `--baseline`=0，C++=0，compare=0。
+- Python 基线：输出 `processed 349 frame(s) at 25.000 FPS`，`total_frames=349`，`event_count=0`，`events=[]`；生成 `/tmp/spark_py_baseline/calibrated_config.json`（1,634 字节，SHA256 `e35c2edb6d1365a87c619b27f7a28816d11a96cff28641a48c1c24a6f179f3ec`）。
+- 新生成标定件包含 `_comment`、`camera`、`calibration` 等额外字段；C++ 正常退出并处理 349 帧，未因这些字段失败。
+- 三类 ROI 均解析成功：`contact [110,240,390,395]`、`falling [140,395,380,640]`、`reference [640,130,1010,210]`；`sample` 与 `synthetic` 坐标一致，适配本次同一 1280×720 输入帧。
+- 新标定件的 `rel_saturation=0.32302656670127305`、`flicker=8.192941815829471`、`confirm_duration_ms=200`，与历史标定配置一致；未跨相机套用。
+- C++：输出 `processed 349 frame(s) at 25.000 FPS`，`total_frames=349`，`event_count=0`，`events=[]`，与第二段历史标定配置的 349 帧、0 事件一致；两端指标文件均为 349 条数据帧（含表头 350 行）。
+- 逐帧与摘要比较的实际左操作数为第二段 `/tmp/spark_py_normal_real`，右操作数为 `/tmp/spark_cpp_calibrated`；标准输出仅为 `COMPARE_OK`，退出码 0。
+- 浮点容差：未传覆盖参数，使用默认绝对容差 `1e-9`、相对容差 `1e-9`，未放宽。
+- 原始日志：`/tmp/spark_calibrated_compare_20261119.log`；产物：`/tmp/spark_py_baseline`、`/tmp/spark_cpp_calibrated`，均不提交。
+
+第四段验收通过。全部规定段落均已执行并记录；第三段 AI 对拍仍为已记录的失败结果，本报告未将其改写为通过。
