@@ -40,6 +40,38 @@ make OPENCV_PKG=opencv4
 - 构建机：`instabox-box-f56ce89d`，Debian GNU/Linux 13 (trixie)，x86_64；G++ 14.2.0（Debian 14.2.0-19），GNU Make 4.4.1，Python 3.13.5；CMake 未安装，本段未使用。
 - OpenCV：4.10.0，安装方式为 Debian 系统包 `libopencv-dev 4.10.0+dfsg-5`，`dpkg` 状态 `install ok installed`；编译参数包含 `-I/usr/include/opencv4`，产物动态链接 `libopencv_videoio.so.410`、`libopencv_imgcodecs.so.410`、`libopencv_imgproc.so.410`、`libopencv_core.so.410`。
 - 完整 warning/error：无。`make OPENCV_PKG=opencv4` 仅输出一条 `g++ -std=c++14 -O3 -Wall -Wextra -pedantic` 编译链接命令，编译器未发出 warning 或 error；完整原始构建日志保存在本机 `/tmp/spark_build_20261119.log`，不提交。
-- 产物：`spark/src/bin/spark_offline` 已生成，22 6,024 字节（226,024 字节），x86-64 ELF 可执行文件，退出码检查为 0。
+- 产物：`spark/src/bin/spark_offline` 已生成，226,024 字节，x86-64 ELF 可执行文件，退出码检查为 0。
 
 第一段验收通过，未修改检测器代码或阈值。
+
+## 第二段：真实正常录像对拍（清单第 5 节）
+
+执行时间：2026-11-19T07:40:27Z（UTC）。素材 `spark/videos/mmexport1793887741382.mp4` 与历史标定配置 `spark/prototype/results/real_baseline2/calibrated_config.json` 均按预检路径使用；Python `cv2` 5.0.0 读取到 1280×720、25.0 FPS、声明 349 帧。C++ 使用上述 OpenCV 4.10.0 完整媒体版。
+
+在仓库根目录原样执行：
+
+```bash
+python3 spark/prototype/run_offline.py \
+  --input spark/videos/mmexport1793887741382.mp4 \
+  --config spark/prototype/results/real_baseline2/calibrated_config.json \
+  --output /tmp/spark_py_normal_real
+
+spark/src/bin/spark_offline \
+  --input spark/videos/mmexport1793887741382.mp4 \
+  --config spark/prototype/results/real_baseline2/calibrated_config.json \
+  --output /tmp/spark_cpp_normal_real
+
+python3 spark/src/compare_offline.py \
+  /tmp/spark_py_normal_real \
+  /tmp/spark_cpp_normal_real
+```
+
+- 退出码：Python=0，C++=0，compare=0。
+- Python：输出 `processed 349 frame(s) at 25.000 FPS`，`total_frames=349`，`event_count=0`，`events=[]`；`metrics.csv` 为 349 条数据帧（含表头 350 行）。
+- C++：输出 `processed 349 frame(s) at 25.000 FPS`，`total_frames=349`，`event_count=0`，`events=[]`；`metrics.csv` 为 349 条数据帧（含表头 350 行）。
+- 历史复现：Python 的 `max_metrics.rel_saturation=0.22361751152073733`、`max_metrics.rel_flicker=5.087411329951655`，与历史约 0.2236、5.0874 一致；349 帧 0 事件亦一致。
+- 逐帧与摘要比较：标准输出仅为 `COMPARE_OK`，退出码 0；帧数、事件列表、事件数及受检指标全部通过。
+- 浮点容差：未传覆盖参数，使用比较器默认绝对容差 `1e-9`、相对容差 `1e-9`，未放宽。
+- 原始日志：`/tmp/spark_real_compare_20261119.log`；对拍产物：`/tmp/spark_py_normal_real`、`/tmp/spark_cpp_normal_real`，均不提交。
+
+第二段验收通过，未修改检测器代码或阈值。
