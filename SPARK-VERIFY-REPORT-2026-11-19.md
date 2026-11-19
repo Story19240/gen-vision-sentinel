@@ -25,3 +25,21 @@
 预检环境：Debian GNU/Linux 13 (trixie)，x86_64；Python 3.13.5；G++ 14.2.0；GNU Make 4.4.1；`pkg-config` 报告 OpenCV 4.10.0；`libopencv-dev 4.10.0+dfsg-5` 通过系统软件包安装且状态为 `install ok installed`；`cmake` 未安装（本单使用 Make，不需要 CMake）。
 
 预检结论：通过，可以进入完整媒体版构建。
+
+## 第一段：完整媒体版构建（清单第 2 节）
+
+执行时间：2026-11-19T07:38:15Z（UTC）。在 `/data/workspace/gen-vision-sentinel/spark/src` 原样执行：
+
+```bash
+pkg-config --modversion opencv4
+make clean
+make OPENCV_PKG=opencv4
+```
+
+- 退出码：`pkg-config`=0（输出 `4.10.0`），`make clean`=0（输出 `rm -rf bin`），`make OPENCV_PKG=opencv4`=0。
+- 构建机：`instabox-box-f56ce89d`，Debian GNU/Linux 13 (trixie)，x86_64；G++ 14.2.0（Debian 14.2.0-19），GNU Make 4.4.1，Python 3.13.5；CMake 未安装，本段未使用。
+- OpenCV：4.10.0，安装方式为 Debian 系统包 `libopencv-dev 4.10.0+dfsg-5`，`dpkg` 状态 `install ok installed`；编译参数包含 `-I/usr/include/opencv4`，产物动态链接 `libopencv_videoio.so.410`、`libopencv_imgcodecs.so.410`、`libopencv_imgproc.so.410`、`libopencv_core.so.410`。
+- 完整 warning/error：无。`make OPENCV_PKG=opencv4` 仅输出一条 `g++ -std=c++14 -O3 -Wall -Wextra -pedantic` 编译链接命令，编译器未发出 warning 或 error；完整原始构建日志保存在本机 `/tmp/spark_build_20261119.log`，不提交。
+- 产物：`spark/src/bin/spark_offline` 已生成，22 6,024 字节（226,024 字节），x86-64 ELF 可执行文件，退出码检查为 0。
+
+第一段验收通过，未修改检测器代码或阈值。
