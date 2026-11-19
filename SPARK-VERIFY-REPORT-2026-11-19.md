@@ -261,3 +261,9 @@ python3 spark/src/compare_offline.py \
 - 原始日志：`/tmp/spark_calibrated_compare_20261119.log`；产物：`/tmp/spark_py_baseline`、`/tmp/spark_cpp_calibrated`，均不提交。
 
 第四段验收通过。全部规定段落均已执行并记录；第三段 AI 对拍仍为已记录的失败结果，本报告未将其改写为通过。
+
+## 收尾核对
+
+清单第 5、6、7 节及完整媒体构建均已执行、记录并分别提交推送。第 5、7 节通过；第 6 节实测失败，证据已完整保留，未修改检测器代码、阈值或比较容差。报告与清单之外无跟踪文件改动；剩余未跟踪项仅为调度方提供的任务单和本地素材，未暂存任何 MP4、`/tmp` 产物或 `spark/prototype/results/` 文件。
+
+TASK_DONE
