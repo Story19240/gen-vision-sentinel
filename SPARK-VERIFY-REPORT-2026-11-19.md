@@ -75,3 +75,158 @@ python3 spark/src/compare_offline.py \
 - 原始日志：`/tmp/spark_real_compare_20261119.log`；对拍产物：`/tmp/spark_py_normal_real`、`/tmp/spark_cpp_normal_real`，均不提交。
 
 第二段验收通过，未修改检测器代码或阈值。
+
+## 第三段：AI 参考火花片对拍（清单第 6 节，未通过并停止）
+
+执行时间：2026-11-19T07:43:51Z（UTC）。环境同第一段：Debian 13 x86_64、Python 3.13.5、G++ 14.2.0、GNU Make 4.4.1；Python `cv2` 5.0.0，C++ OpenCV 4.10.0。AI 素材实测为 720×1280、24.0 FPS、声明 193 帧。仅使用 AI 片专用配置 `spark/prototype/local_ai720_config.json`，未使用 1#A 标定配置。
+
+在仓库根目录原样执行：
+
+```bash
+python3 spark/prototype/run_offline.py \
+  --input spark/videos/mmexport1793887748039.mp4 \
+  --config spark/prototype/local_ai720_config.json \
+  --output /tmp/spark_py_ai_reference
+
+spark/src/bin/spark_offline \
+  --input spark/videos/mmexport1793887748039.mp4 \
+  --config spark/prototype/local_ai720_config.json \
+  --output /tmp/spark_cpp_ai_reference
+
+python3 spark/src/compare_offline.py \
+  /tmp/spark_py_ai_reference \
+  /tmp/spark_cpp_ai_reference
+```
+
+### 退出码、帧数与事件
+
+- Python 退出码 0：输出 `processed 193 frame(s) at 24.000 FPS`，`total_frames=193`，`event_count=2`，指标数据 193 条。
+- C++ 退出码 0：输出 `processed 193 frame(s) at 24.000 FPS`，`total_frames=193`，`event_count=2`，指标数据 193 条。
+- compare 退出码 **1**，没有输出 `COMPARE_OK`；使用默认绝对容差 `1e-9`、相对容差 `1e-9`，未放宽。
+
+| 端 | 事件 1 | 事件 2 |
+| --- | --- | --- |
+| Python | frame_index=92，frame_number=93，3833ms，heavy / blue_white | frame_index=113，frame_number=114，4708ms，heavy / blue_white |
+| C++ | frame_index=93，frame_number=94，3875ms，heavy / blue_white | frame_index=113，frame_number=114，4708ms，heavy / blue_white |
+
+历史参照差异：Python 复现了 2 个 heavy / blue_white 事件，但首事件为 3833ms，比历史约 3875ms 早 42ms（24 FPS 下 1 帧），第二事件 4708ms 一致。这是历史参照值差异；另有下述独立的 Python/C++ 不一致，不能写为通过。
+
+### compare 差异证据
+
+完整 compare 输出和两端原始运行输出保存在 `/tmp/spark_ai_compare_20261119.log`（2,207 行、155,037 字节，不提交）。对完整输出的逐行统计为：193/193 帧存在差异，共 2,084 条逐帧字段差异，另有 1 条事件列表差异和 12 条 `max_metrics` 差异。
+
+| 逐帧差异字段 | 差异行数 | 首个差异帧/示例（Python != C++） |
+| --- | ---: | --- |
+| `color_match_ratio` | 193 | frame 0：0.8148148148148148 != 0.6153846153846154 |
+| `contact_sat_ratio` | 193 | frame 0：0.0005113636363636364 != 0.0002462121212121212 |
+| `contact_v_mean` | 193 | frame 0：128.66617424242423 != 127.42155303030303 |
+| `falling_bright_pixels` | 193 | frame 0：243 != 196 |
+| `reference_v_mean` | 193 | frame 0：185.40866738894908 != 185.30747562296858 |
+| `rel_saturation` | 193 | frame 0：-0.00021994730621491178 != -0.00037675645950293837 |
+| `contact_flicker` | 192 | frame 1：0.11537878787879663 != 0.11534090909090366 |
+| `rel_flicker` | 192 | frame 1：-0.4851087527495963 != -0.47279560228504636 |
+| `ref_flicker` | 190 | frame 1：0.6004875406283929 != 0.58813651137595 |
+| `falling_components` | 165 | frame 1：14 != 16 |
+| `ref_sat_ratio` | 130 | frame 0：0.0007313109425785482 != 0.0006229685807150596 |
+| `color_hit` | 25 | frame 5：True != False |
+| `candidate_duration_ms` | 19 | frame 88：42 != 0 |
+| `candidate` | 8 | frame 87：True != False |
+| `event_triggered` | 2 | frame 92：True != False |
+| `level` | 2 | frame 92：heavy != none |
+| `color_type` | 1 | frame 163：orange_yellow != blue_white |
+
+`max_metrics` 的 12 项差异为：`candidate_duration_ms` 1083 != 750；`color_match_ratio` 0.8648648648648649 != 0.6885245901639344；`contact_flicker` 2.644903581267215 != 2.5804080578512325；`contact_sat_ratio` / `rel_saturation` 均为 0.17609848484848484 != 0.16460227272727274；`contact_v_mean` 171.49647727272728 != 169.51897727272728；`falling_bright_pixels` 7330 != 6585；`falling_components` 93 != 87；`ref_flicker` 0.9740544666600964 != 0.9780335861321781；`ref_sat_ratio` 0.000866738894907909 != 0.0008125677139761647；`reference_v_mean` 188.14804983748647 != 187.9687432286024；`rel_flicker` 2.2931873397622424 != 2.2289281996812322。
+
+两端 `summary.json` 全文如下。
+
+Python `/tmp/spark_py_ai_reference/summary.json`：
+
+```json
+{
+  "total_frames": 193,
+  "event_count": 2,
+  "events": [
+    {
+      "frame_index": 92,
+      "frame_number": 93,
+      "timestamp_ms": 3833,
+      "level": "heavy",
+      "color_type": "blue_white"
+    },
+    {
+      "frame_index": 113,
+      "frame_number": 114,
+      "timestamp_ms": 4708,
+      "level": "heavy",
+      "color_type": "blue_white"
+    }
+  ],
+  "max_metrics": {
+    "rel_saturation": 0.17609848484848484,
+    "contact_sat_ratio": 0.17609848484848484,
+    "ref_sat_ratio": 0.000866738894907909,
+    "rel_flicker": 2.2931873397622424,
+    "contact_flicker": 2.644903581267215,
+    "ref_flicker": 0.9740544666600964,
+    "color_match_ratio": 0.8648648648648649,
+    "color_hit": 1,
+    "falling_bright_pixels": 7330,
+    "falling_components": 93,
+    "candidate": 1,
+    "event_triggered": 1,
+    "contact_v_mean": 171.49647727272728,
+    "reference_v_mean": 188.14804983748647,
+    "candidate_duration_ms": 1083
+  }
+}
+```
+
+C++ `/tmp/spark_cpp_ai_reference/summary.json`：
+
+```json
+{
+  "total_frames": 193,
+  "event_count": 2,
+  "events": [
+    {
+      "frame_index": 93,
+      "frame_number": 94,
+      "timestamp_ms": 3875,
+      "level": "heavy",
+      "color_type": "blue_white"
+    },
+    {
+      "frame_index": 113,
+      "frame_number": 114,
+      "timestamp_ms": 4708,
+      "level": "heavy",
+      "color_type": "blue_white"
+    }
+  ],
+  "max_metrics": {
+    "rel_saturation": 0.16460227272727274,
+    "contact_sat_ratio": 0.16460227272727274,
+    "ref_sat_ratio": 0.00081256771397616469,
+    "rel_flicker": 2.2289281996812322,
+    "contact_flicker": 2.5804080578512325,
+    "ref_flicker": 0.97803358613217806,
+    "color_match_ratio": 0.68852459016393441,
+    "color_hit": 1,
+    "falling_bright_pixels": 6585,
+    "falling_components": 87,
+    "candidate": 1,
+    "event_triggered": 1,
+    "contact_v_mean": 169.51897727272728,
+    "reference_v_mean": 187.96874322860239,
+    "candidate_duration_ms": 750
+  }
+}
+```
+
+对拍产物 `/tmp/spark_py_ai_reference`、`/tmp/spark_cpp_ai_reference` 不提交。按任务单第 0 节的失败停止要求，本段记录后终止；未修改检测器代码、未修改阈值、未放宽容差，也未进入清单第 7 节。
+
+## 第四段：标定配置兼容性（清单第 7 节，未执行）
+
+未执行。原因：第三段 compare 退出码 1，逐帧指标及事件列表不一致，任务单明确要求出现 `COMPARE` 不一致后停在该节。因此未运行 `/tmp/spark_py_baseline` 基线生成、未运行 `/tmp/spark_cpp_calibrated`，也没有该节的帧数、事件数或 `COMPARE_OK` 结论。
+
+本单在第三段失败处停止，未满足“全部段落完成”，故报告末尾不写 `TASK_DONE`。
