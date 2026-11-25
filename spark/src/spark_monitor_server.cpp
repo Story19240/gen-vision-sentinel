@@ -262,6 +262,7 @@ std::string configured_rtsp_url(const ServerOptions& options) {
 }
 
 GstElement* open_rtsp_pipeline(const std::string& url, GstElement** sink) {
+    *sink = nullptr;
     const std::string description = "rtspsrc location=" + url +
         " protocols=tcp latency=100 ! rtph265depay ! nvv4l2decoder ! nvvidconv ! "
         "video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! "
@@ -272,10 +273,41 @@ GstElement* open_rtsp_pipeline(const std::string& url, GstElement** sink) {
     if (!pipeline) return nullptr;
     *sink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
     if (!*sink || gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+        if (*sink) {
+            gst_object_unref(*sink);
+            *sink = nullptr;
+        }
+        gst_element_set_state(pipeline, GST_STATE_NULL);
         gst_object_unref(pipeline);
         return nullptr;
     }
     return pipeline;
+}
+
+void close_rtsp_pipeline(GstElement*& pipeline, GstElement*& sink) {
+    if (pipeline) {
+        gst_element_set_state(pipeline, GST_STATE_NULL);
+    }
+    if (sink) {
+        gst_object_unref(sink);
+        sink = nullptr;
+    }
+    if (pipeline) {
+        gst_object_unref(pipeline);
+        pipeline = nullptr;
+    }
+}
+
+bool rtsp_bus_has_error_or_eos(GstElement* pipeline) {
+    if (!pipeline) return true;
+    GstBus* bus = gst_element_get_bus(pipeline);
+    if (!bus) return false;
+    GstMessage* msg = gst_bus_timed_pop_filtered(
+        bus, 0, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+    const bool triggered = (msg != nullptr);
+    if (msg) gst_message_unref(msg);
+    gst_object_unref(bus);
+    return triggered;
 }
 
 bool pull_rtsp_frame(GstElement* sink, cv::Mat& frame) {
@@ -318,36 +350,70 @@ int main(int argc, char** argv) {
         cv::VideoCapture capture;
         GstElement* pipeline = nullptr;
         GstElement* sink = nullptr;
+        std::string rtsp_url;
+        const bool use_rtsp = options.input.empty();
         double source_fps = 25.0;
-        if (!options.input.empty()) {
+        if (!use_rtsp) {
             capture.open(options.input);
             if (!capture.isOpened()) throw spark::SparkError("failed to open input video");
             source_fps = capture.get(cv::CAP_PROP_FPS);
             if (source_fps <= 0.0 || source_fps != source_fps) source_fps = 25.0;
             std::cout << "[spark] offline input: " << options.input << "\n";
         } else {
-            const std::string url = configured_rtsp_url(options);
-            if (url.empty()) throw spark::SparkError("no input or RTSP URL configured");
-            pipeline = open_rtsp_pipeline(url, &sink);
-            if (!pipeline) throw spark::SparkError("failed to start RTSP pipeline");
+            rtsp_url = configured_rtsp_url(options);
+            if (rtsp_url.empty()) throw spark::SparkError("no input or RTSP URL configured");
             source_fps = std::stod(env_or("SPARK_FPS", "25"));
-            std::cout << "[spark] RTSP source connected (credentials hidden)\n";
+            pipeline = open_rtsp_pipeline(rtsp_url, &sink);
+            if (pipeline && sink) {
+                std::cout << "[spark] RTSP source connected (credentials hidden)\n";
+            } else {
+                close_rtsp_pipeline(pipeline, sink);
+                std::cout << "[spark] RTSP initial connect failed, will retry every 3s\n";
+            }
         }
 
         const auto started = std::chrono::steady_clock::now();
         auto fps_started = started;
+        auto last_frame_time = started;
+        auto last_reconnect_attempt = started - std::chrono::seconds(3);
         std::int64_t frame_index = 0;
         int fps_frames = 0;
         double measured_fps = 0.0;
         while (g_running) {
             cv::Mat frame;
             bool received = false;
-            if (sink) {
-                received = pull_rtsp_frame(sink, frame);
-                if (!received) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (use_rtsp) {
+                const auto now_check = std::chrono::steady_clock::now();
+                if (!sink) {
+                    if (now_check - last_reconnect_attempt >= std::chrono::seconds(3)) {
+                        last_reconnect_attempt = now_check;
+                        pipeline = open_rtsp_pipeline(rtsp_url, &sink);
+                        if (pipeline && sink) {
+                            last_frame_time = std::chrono::steady_clock::now();
+                            fps_started = last_frame_time;
+                            fps_frames = 0;
+                            std::cout << "[spark] RTSP source reconnected (credentials hidden)\n";
+                        } else {
+                            close_rtsp_pipeline(pipeline, sink);
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     continue;
                 }
+                received = pull_rtsp_frame(sink, frame);
+                if (!received) {
+                    if (rtsp_bus_has_error_or_eos(pipeline) ||
+                        now_check - last_frame_time >= std::chrono::seconds(5)) {
+                        std::cout << "[spark] RTSP stream lost, marking offline and scheduling reconnect\n";
+                        g_service->finish_source();
+                        close_rtsp_pipeline(pipeline, sink);
+                        last_reconnect_attempt = now_check;
+                    } else {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    continue;
+                }
+                last_frame_time = std::chrono::steady_clock::now();
             } else {
                 received = capture.read(frame) && !frame.empty();
                 if (!received) {
@@ -361,7 +427,7 @@ int main(int argc, char** argv) {
             }
 
             const auto now = std::chrono::steady_clock::now();
-            const std::int64_t timestamp_ms = sink
+            const std::int64_t timestamp_ms = use_rtsp
                 ? std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count()
                 : static_cast<std::int64_t>(frame_index * 1000.0 / source_fps);
             ++frame_index;
@@ -384,7 +450,7 @@ int main(int argc, char** argv) {
                 std::cout << "[spark] suspected spark: " << result.level << " / "
                           << result.color_type << " at " << timestamp_ms << " ms\n";
             }
-            if (!sink && !options.no_delay) {
+            if (!use_rtsp && !options.no_delay) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(
                     static_cast<int>(1000.0 / source_fps)));
             }
@@ -395,11 +461,7 @@ int main(int argc, char** argv) {
             std::cout << "PLAYBACK_COMPLETE\n";
             while (g_running) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        if (sink) {
-            gst_element_set_state(pipeline, GST_STATE_NULL);
-            gst_object_unref(sink);
-            gst_object_unref(pipeline);
-        }
+        close_rtsp_pipeline(pipeline, sink);
         capture.release();
         g_service->shutdown();
         return 0;
