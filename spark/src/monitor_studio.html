@@ -10,8 +10,8 @@ header{min-height:58px;padding:10px 18px;border-bottom:1px solid #30383d;display
 h1{font-size:20px;margin:0;font-weight:600}button,input{font:inherit}button{cursor:pointer}
 .badge{padding:4px 8px;border:1px solid #69767e;border-radius:4px;font-size:12px}.badge.monitor{color:#74d69a;border-color:#35885a}.badge.calibrate{color:#f0c36a;border-color:#9c792e}
 .source{margin-left:auto;color:#aab4ba;font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:16px;padding:16px;max-width:1800px;margin:auto}
-.video-stage{position:relative;background:#030405;line-height:0;border:1px solid #384148;min-height:120px;overflow:hidden}
-#stream{display:block;width:100%;height:auto;object-fit:contain}#overlay{position:absolute;left:0;top:0;cursor:crosshair;touch-action:none}
+.video-stage{position:relative;background:#030405;line-height:0;border:1px solid #384148;min-height:120px;aspect-ratio:16/9;overflow:hidden}
+.stream-layer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}#overlay{position:absolute;left:0;top:0;z-index:3;cursor:crosshair;touch-action:none}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #384148;border-top:0;background:#181d20}
 .metric{padding:10px;border-right:1px solid #30383d;min-width:0}.metric:nth-child(4n){border-right:0}.metric label{display:block;color:#8f9aa2;font-size:11px;margin-bottom:4px}.metric span{font-family:Consolas,monospace;font-size:13px;word-break:break-all}
 .sidebar{display:flex;flex-direction:column;gap:12px}.section{border-top:2px solid #4c5961;padding-top:10px}.section h2{font-size:14px;margin:0 0 10px;font-weight:600}
@@ -35,7 +35,7 @@ input{width:100%;background:#0d1113;color:#e7ecef;border:1px solid #455159;borde
 </header>
 <main class="layout">
   <div>
-    <div class="video-stage"><img id="stream" src="/video_feed" alt="实时画面"><canvas id="overlay"></canvas></div>
+    <div class="video-stage"><img id="stream" class="stream-layer" style="z-index:2" src="/video_feed" alt="实时画面"><img id="streamBack" class="stream-layer" style="z-index:1;opacity:0" alt=""><canvas id="overlay"></canvas></div>
     <div class="metrics">
       <div class="metric"><label>相对饱和率</label><span id="mSat">-</span></div>
       <div class="metric"><label>相对闪烁</label><span id="mFlicker">-</span></div>
@@ -79,7 +79,7 @@ input{width:100%;background:#0d1113;color:#e7ecef;border:1px solid #455159;borde
 </main>
 <div id="toast"></div>
 <script>
-const img=document.getElementById('stream'),canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
+let img=document.getElementById('stream'),backImg=document.getElementById('streamBack');const canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
 let state={rois:{},mode:'CALIBRATING',events:[]},drawing=false,start=null,current=null,toastTimer=null;
 const roiColors={contact_roi:'#f04e46',falling_roi:'#f0a52e',reference_roi:'#4a9df5'};
 const roiNames={contact_roi:'contact',falling_roi:'falling',reference_roi:'reference'};
@@ -116,7 +116,8 @@ async function resetRelay(){if(!confirm('确认将 Y1 断电复位？'))return;t
 async function saveFeishuUrl(){try{await api('/api/set_feishu_url?url='+encodeURIComponent(document.getElementById('feishuUrl').value||'auto'));toast('飞书大屏链接已保存');refresh()}catch(e){toast(e.message,true)}}
 async function testFeishu(){try{await api('/api/feishu_test');toast('测试卡片已提交')}catch(e){toast(e.message,true)}}
 window.addEventListener('keydown',event=>{if(event.target.tagName==='INPUT')return;const key=event.key.toLowerCase();if(key==='c')bindRoi('contact_roi');if(key==='f')bindRoi('falling_roi');if(key==='r')bindRoi('reference_roi')});
-img.addEventListener('load',initCanvas);window.addEventListener('resize',initCanvas);setInterval(refresh,800);setInterval(()=>{img.src='';setTimeout(()=>{img.src='/video_feed?t='+Date.now()},50)},60000);refresh();
+function swapStream(){if(!backImg)return;backImg.onload=()=>{backImg.onload=null;backImg.style.zIndex='2';backImg.style.opacity='1';img.style.zIndex='1';img.style.opacity='0';const old=img;img=backImg;backImg=old;setTimeout(()=>{if(old!==img)old.src=''},100);initCanvas()};backImg.src='/video_feed?t='+Date.now()}
+img.addEventListener('load',initCanvas);window.addEventListener('resize',initCanvas);setInterval(refresh,800);setInterval(swapStream,60000);refresh();
 </script>
 </body>
 </html>
