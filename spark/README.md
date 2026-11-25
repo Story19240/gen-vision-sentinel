@@ -12,7 +12,7 @@ spark/
 ├── 📁 images/      # 碳刷与滑环实拍基准图、Jetson 推理验证快照
 ├── 📁 videos/      # （预留）现场碳刷打火与正常运行实拍视频
 ├── 📁 prototype/   # 物理信号检测离线算法原型与合成验证
-├── 📁 src/         # （预留）生产 C++ 火花检测源码与算法
+├── 📁 src/         # C++ 离线对拍工具与 8081 在线监控 / Web 标定服务
 └── 📑 README.md    # 本模块说明与接口规划
 ```
 
@@ -38,3 +38,5 @@ spark/
 - [离线运行 CLI](prototype/run_offline.py)
 
 示例配置见 [`spark_config.example.json`](spark_config.example.json)。其中 ROI 为待标定占位值，曝光与增益待现场锁定，`confirm_duration_ms=200` 为待项目主确认的原型默认值。生产 C++ 移植、相机源、进程形态及 Y1 动作方式均不在本原型范围内。
+
+在线服务已经独立落在 `src/spark_monitor_server.cpp` 与 `src/monitor_studio.html`，提供网页标定、实时监控、事件抓拍/录像、飞书疑似通知和可明确启用的 Y1 异常通电联动。启动、继电器锁存与复位方法见 [src/README.md](src/README.md)。

@@ -4,6 +4,8 @@
 !.env.example
 alarm_py/feishu_config.json
 water/water_config.json
+spark/spark_config.json
+spark/recordings/
 
 # Python artifacts
 __pycache__/

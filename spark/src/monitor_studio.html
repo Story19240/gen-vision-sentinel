@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>碳刷火花监测</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111517;color:#e7ecef;font-family:Arial,"Microsoft YaHei",sans-serif;font-size:14px}
+header{min-height:58px;padding:10px 18px;border-bottom:1px solid #30383d;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#181d20}
+h1{font-size:20px;margin:0;font-weight:600}button,input{font:inherit}button{cursor:pointer}
+.badge{padding:4px 8px;border:1px solid #69767e;border-radius:4px;font-size:12px}.badge.monitor{color:#74d69a;border-color:#35885a}.badge.calibrate{color:#f0c36a;border-color:#9c792e}
+.source{margin-left:auto;color:#aab4ba;font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:16px;padding:16px;max-width:1800px;margin:auto}
+.video-stage{position:relative;background:#030405;line-height:0;border:1px solid #384148;min-height:120px;overflow:hidden}
+#stream{display:block;width:100%;height:auto;object-fit:contain}#overlay{position:absolute;left:0;top:0;cursor:crosshair;touch-action:none}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #384148;border-top:0;background:#181d20}
+.metric{padding:10px;border-right:1px solid #30383d;min-width:0}.metric:nth-child(4n){border-right:0}.metric label{display:block;color:#8f9aa2;font-size:11px;margin-bottom:4px}.metric span{font-family:Consolas,monospace;font-size:13px;word-break:break-all}
+.sidebar{display:flex;flex-direction:column;gap:12px}.section{border-top:2px solid #4c5961;padding-top:10px}.section h2{font-size:14px;margin:0 0 10px;font-weight:600}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}.row>*{min-width:0}.grow{flex:1}.btn{border:1px solid #4b5860;background:#252d32;color:#e7ecef;border-radius:4px;padding:8px 10px}
+.btn:hover{background:#334047}.btn.primary{background:#256544;border-color:#35885a}.btn.danger{border-color:#9a514b}.btn:disabled{opacity:.45;cursor:not-allowed}
+.roi-button{width:100%;text-align:left;display:flex;align-items:center;gap:8px}.swatch{width:12px;height:12px;display:inline-block;flex:none}.contact{background:#f04e46}.falling{background:#f0a52e}.reference{background:#4a9df5}
+.selection{padding:8px;background:#0d1113;border:1px solid #30383d;color:#9fd4b2;font-family:Consolas,monospace;min-height:36px;margin-bottom:8px;word-break:break-all}
+.field{display:grid;grid-template-columns:1fr 120px;align-items:center;gap:8px;margin-bottom:8px}.field label{color:#b4bec4;font-size:12px}
+input{width:100%;background:#0d1113;color:#e7ecef;border:1px solid #455159;border-radius:3px;padding:7px}input[type=checkbox]{width:18px;height:18px;padding:0;accent-color:#35885a}input:focus{outline:1px solid #6699b8}
+.event{padding:8px 0;border-top:1px solid #30383d;font-size:12px}.event:first-child{border-top:0}.event a{color:#8fc4ef;margin-right:10px}.muted{color:#8f9aa2}.error{color:#f08a80}
+#toast{position:fixed;right:18px;bottom:18px;max-width:360px;padding:10px 14px;background:#263238;border:1px solid #64747e;border-radius:4px;display:none;z-index:5}
+@media(max-width:1000px){.layout{grid-template-columns:1fr;padding:10px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.source{margin-left:0}.sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.sidebar{display:flex}.layout{padding:6px}header{padding:10px}.metrics{grid-template-columns:1fr 1fr}.metric{padding:8px}.field{grid-template-columns:1fr 100px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>1#A 碳刷火花监测</h1><span id="mode" class="badge calibrate">标定中</span>
+  <button id="recalibrate" class="btn" onclick="enterCalibration()">重新标定</button>
+  <span id="source" class="source">视频未连接</span>
+</header>
+<main class="layout">
+  <div>
+    <div class="video-stage"><img id="stream" src="/video_feed" alt="实时画面"><canvas id="overlay"></canvas></div>
+    <div class="metrics">
+      <div class="metric"><label>相对饱和率</label><span id="mSat">-</span></div>
+      <div class="metric"><label>相对闪烁</label><span id="mFlicker">-</span></div>
+      <div class="metric"><label>颜色匹配</label><span id="mColor">-</span></div>
+      <div class="metric"><label>候选持续</label><span id="mDuration">-</span></div>
+      <div class="metric"><label>下落亮像素</label><span id="mFalling">-</span></div>
+      <div class="metric"><label>事件等级</label><span id="mLevel">-</span></div>
+      <div class="metric"><label>录像状态</label><span id="mRecording">-</span></div>
+      <div class="metric"><label>继电器 Y1</label><span id="mRelay">未启用</span></div>
+    </div>
+  </div>
+  <aside class="sidebar">
+    <section class="section"><h2>区域标定</h2>
+      <div id="selection" class="selection">未选择区域</div>
+      <div class="row"><button class="btn roi-button grow" onclick="bindRoi('contact_roi')"><i class="swatch contact"></i>绑定接触区 (C)</button></div>
+      <div class="row"><button class="btn roi-button grow" onclick="bindRoi('falling_roi')"><i class="swatch falling"></i>绑定下落区 (F)</button></div>
+      <div class="row"><button class="btn roi-button grow" onclick="bindRoi('reference_roi')"><i class="swatch reference"></i>绑定参照区 (R)</button></div>
+      <div class="row"><button class="btn grow" onclick="clearRois()">清空区域</button><button class="btn grow" onclick="loadHistory()">载入配置</button></div>
+      <button class="btn primary" style="width:100%" onclick="startMonitoring()">确认标定并进入监控</button>
+    </section>
+    <section class="section"><h2>算法参数</h2>
+      <div class="field"><label for="thSat">相对饱和率阈值</label><input id="thSat" type="number" min="0" step="0.0001"></div>
+      <div class="field"><label for="thFlicker">闪烁阈值</label><input id="thFlicker" type="number" min="0" step="0.01"></div>
+      <div class="field"><label for="thColor">颜色匹配阈值</label><input id="thColor" type="number" min="0" max="1" step="0.01"></div>
+      <div class="field"><label for="confirmMs">确认时长 (ms)</label><input id="confirmMs" type="number" min="0" step="10"></div>
+      <div class="field"><label for="cooldown">飞书冷却 (s)</label><input id="cooldown" type="number" min="0" step="1"></div>
+      <button class="btn" style="width:100%" onclick="saveParams()">保存参数</button>
+    </section>
+    <section class="section"><h2>继电器联动</h2>
+      <div class="row"><label class="grow" for="relayEnabled">确认异常时 Y1 通电</label><input id="relayEnabled" type="checkbox"></div>
+      <div class="row"><button class="btn grow" onclick="saveRelaySettings()">保存联动设置</button><button class="btn danger grow" onclick="resetRelay()">Y1 断电复位</button></div>
+      <div id="relayState" class="muted">未启用</div>
+    </section>
+    <section class="section"><h2>飞书通知</h2>
+      <div class="field"><label for="feishuUrl">大屏链接 / auto</label><input id="feishuUrl" type="text"></div>
+      <div class="row"><button class="btn grow" onclick="saveFeishuUrl()">保存链接</button><button class="btn grow" onclick="testFeishu()">发送测试卡片</button></div>
+      <div id="feishuState" class="muted">未配置</div>
+    </section>
+    <section class="section"><h2>最近事件</h2><div id="events" class="muted">暂无事件</div></section>
+  </aside>
+</main>
+<div id="toast"></div>
+<script>
+const img=document.getElementById('stream'),canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
+let state={rois:{},mode:'CALIBRATING',events:[]},drawing=false,start=null,current=null,toastTimer=null;
+const roiColors={contact_roi:'#f04e46',falling_roi:'#f0a52e',reference_roi:'#4a9df5'};
+const roiNames={contact_roi:'contact',falling_roi:'falling',reference_roi:'reference'};
+function toast(message,isError=false){const el=document.getElementById('toast');el.textContent=message;el.className=isError?'error':'';el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',3500)}
+function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function api(path){const response=await fetch(path);const data=await response.json();if(data.status==='error')throw new Error(data.msg||'request failed');return data}
+function initCanvas(){const width=Math.round(img.clientWidth),height=Math.round(img.clientHeight);if(width<=0||height<=0||!img.naturalWidth||!img.naturalHeight)return;if(canvas.width!==width)canvas.width=width;if(canvas.height!==height)canvas.height=height;redraw()}
+function scales(){return {x:canvas.width/(img.naturalWidth||1),y:canvas.height/(img.naturalHeight||1)}}
+function boxOriginal(box){return{x1:Math.round(box.x1*(img.naturalWidth||1)/canvas.width),y1:Math.round(box.y1*(img.naturalHeight||1)/canvas.height),x2:Math.round(box.x2*(img.naturalWidth||1)/canvas.width),y2:Math.round(box.y2*(img.naturalHeight||1)/canvas.height)}}
+function strokeBox(box,color,label){const s=scales(),x=box[0]*s.x,y=box[1]*s.y,w=(box[2]-box[0])*s.x,h=(box[3]-box[1])*s.y;ctx.strokeStyle=color;ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);ctx.fillStyle=color;ctx.font='bold 12px Arial';ctx.fillText(label,x+3,Math.max(14,y-5))}
+function redraw(){ctx.clearRect(0,0,canvas.width,canvas.height);for(const name of Object.keys(roiColors)){const box=state.rois[name];if(box&&box[2]>box[0]&&box[3]>box[1])strokeBox(box,roiColors[name],roiNames[name])}if(current){ctx.strokeStyle='#62e6c5';ctx.setLineDash([5,4]);ctx.strokeRect(current.x1,current.y1,current.x2-current.x1,current.y2-current.y1);ctx.setLineDash([])}}
+function point(event){const r=canvas.getBoundingClientRect();return{x:event.clientX-r.left,y:event.clientY-r.top}}
+canvas.addEventListener('pointerdown',event=>{if(state.mode==='MONITORING'||event.button!==0)return;event.preventDefault();canvas.setPointerCapture(event.pointerId);start=point(event);drawing=true;current=null});
+canvas.addEventListener('pointermove',event=>{if(!drawing)return;event.preventDefault();const p=point(event),x1=Math.min(start.x,p.x),y1=Math.min(start.y,p.y);current={x1,y1,x2:Math.max(start.x,p.x),y2:Math.max(start.y,p.y)};const b=boxOriginal(current);document.getElementById('selection').textContent=`[${b.x1}, ${b.y1}, ${b.x2}, ${b.y2}]  ${b.x2-b.x1}×${b.y2-b.y1}`;redraw()});
+canvas.addEventListener('pointerup',event=>{drawing=false;if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId)});canvas.addEventListener('pointercancel',()=>drawing=false);
+function setIdle(id,value){const el=document.getElementById(id);if(document.activeElement!==el)el.value=value}
+function render(data){state=data;const monitor=data.mode==='MONITORING',mode=document.getElementById('mode');mode.textContent=monitor?'正式监控':'标定中';mode.className='badge '+(monitor?'monitor':'calibrate');canvas.style.touchAction=monitor?'pan-y':'none';
+  document.getElementById('source').textContent=`${data.frame_width}×${data.frame_height}  ${Number(data.fps||0).toFixed(1)} FPS  ${data.source_online?'在线':'离线'}`;
+  const m=data.metrics||{};document.getElementById('mSat').textContent=Number(m.rel_saturation||0).toFixed(5);document.getElementById('mFlicker').textContent=Number(m.rel_flicker||0).toFixed(4);document.getElementById('mColor').textContent=`${Number(m.color_match_ratio||0).toFixed(3)} / ${m.color_type||'none'}`;document.getElementById('mDuration').textContent=`${m.candidate_duration_ms||0} ms`;document.getElementById('mFalling').textContent=m.falling_bright_pixels||0;document.getElementById('mLevel').textContent=m.level||'none';document.getElementById('mRecording').textContent=data.recording_active?'录制中':(data.last_recording||'待机');
+  const relayEnabled=!!data.relay_trip_enabled,relayEnergized=!!data.relay_energized,relayToggle=document.getElementById('relayEnabled');if(document.activeElement!==relayToggle)relayToggle.checked=relayEnabled;
+  document.getElementById('mRelay').textContent=!relayEnabled?'未启用':(relayEnergized?'通电指令':'已断电');const relayState=document.getElementById('relayState');relayState.textContent=!relayEnabled?'联动未启用':(relayEnergized?'Y1 通电指令已下发，等待人工复位':(data.relay_connected?'Y1 已连接，等待异常事件':'Y1 未连接，正在重连'));relayState.className=relayEnergized?'error':'muted';
+  setIdle('thSat',(data.thresholds||{}).rel_saturation??0.01);setIdle('thFlicker',(data.thresholds||{}).flicker??0.5);setIdle('thColor',(data.thresholds||{}).color_match_ratio??0.5);setIdle('confirmMs',data.confirm_duration_ms??200);setIdle('cooldown',data.cooldown_sec??60);setIdle('feishuUrl',(data.feishu||{}).web_monitor_url||'auto');
+  document.getElementById('feishuState').textContent=data.feishu&&data.feishu.enabled?'已配置':'未启用';document.getElementById('events').innerHTML=data.events&&data.events.length?data.events.map(e=>`<div class="event"><strong>${esc(e.level)} / ${esc(e.color_type)}</strong><div>${esc(e.time)} · ${e.timestamp_ms} ms</div><a href="/recordings/${encodeURIComponent(e.snapshot)}" target="_blank">抓拍</a>${e.clip?(e.clip_ready?`<a href="/recordings/${encodeURIComponent(e.clip)}" target="_blank">录像</a>`:'<span class="muted">录像处理中</span>'):'<span class="muted">未单独录像</span>'}</div>`).join(''):'<span class="muted">暂无事件</span>';initCanvas()}
+async function refresh(){try{const response=await fetch('/api/status');render(await response.json())}catch(_){}}
+function selected(){if(!current){toast('尚未选择区域',true);return null}const b=boxOriginal(current);if(b.x2-b.x1<8||b.y2-b.y1<8){toast('区域尺寸无效',true);return null}return b}
+async function bindRoi(name){const b=selected();if(!b)return;try{await api(`/api/set_roi?name=${name}&x1=${b.x1}&y1=${b.y1}&x2=${b.x2}&y2=${b.y2}`);current=null;document.getElementById('selection').textContent='未选择区域';toast(`${roiNames[name]} 已保存`);refresh()}catch(e){toast(e.message,true)}}
+async function clearRois(){if(!confirm('确认清空三类标定区域？'))return;try{await api('/api/clear_rois');toast('标定区域已清空');refresh()}catch(e){toast(e.message,true)}}
+async function loadHistory(){try{await api('/api/load_history');toast('配置已载入');refresh()}catch(e){toast(e.message,true)}}
+async function startMonitoring(){try{await api('/api/start_monitoring');toast('已进入正式监控');refresh()}catch(e){toast(e.message,true)}}
+async function enterCalibration(){if(!confirm('进入标定模式并暂停事件检测？'))return;try{await api('/api/enter_calibrate');toast('已切换到标定模式');refresh()}catch(e){toast(e.message,true)}}
+async function saveParams(){const keys={rel_saturation:'thSat',flicker:'thFlicker',color_match_ratio:'thColor',confirm_duration_ms:'confirmMs',cooldown_sec:'cooldown'},params=new URLSearchParams();for(const key of Object.keys(keys))params.set(key,document.getElementById(keys[key]).value);try{await api('/api/update_params?'+params.toString());toast('算法参数已保存');refresh()}catch(e){toast(e.message,true)}}
+async function saveRelaySettings(){const toggle=document.getElementById('relayEnabled'),enabled=toggle.checked;if(enabled&&!confirm('启用后，确认火花异常将给 Y1 通电并保持，直到人工复位。确认启用？')){toggle.checked=false;refresh();return}try{await api('/api/update_relay?enabled='+(enabled?'1':'0'));toast(enabled?'Y1 异常通电已启用':'Y1 联动已禁用并断电');refresh()}catch(e){toggle.checked=!!state.relay_trip_enabled;toast(e.message,true)}}
+async function resetRelay(){if(!confirm('确认将 Y1 断电复位？'))return;try{await api('/api/relay_reset');toast('Y1 断电复位指令已下发');refresh()}catch(e){toast(e.message,true)}}
+async function saveFeishuUrl(){try{await api('/api/set_feishu_url?url='+encodeURIComponent(document.getElementById('feishuUrl').value||'auto'));toast('飞书大屏链接已保存');refresh()}catch(e){toast(e.message,true)}}
+async function testFeishu(){try{await api('/api/feishu_test');toast('测试卡片已提交')}catch(e){toast(e.message,true)}}
+window.addEventListener('keydown',event=>{if(event.target.tagName==='INPUT')return;const key=event.key.toLowerCase();if(key==='c')bindRoi('contact_roi');if(key==='f')bindRoi('falling_roi');if(key==='r')bindRoi('reference_roi')});
+img.addEventListener('load',initCanvas);window.addEventListener('resize',initCanvas);setInterval(refresh,800);setInterval(()=>{img.src='';setTimeout(()=>{img.src='/video_feed?t='+Date.now()},50)},60000);refresh();
+</script>
+</body>
+</html>

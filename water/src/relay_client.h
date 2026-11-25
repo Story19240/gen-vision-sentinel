@@ -28,8 +28,13 @@ public:
     RelayClient();
     ~RelayClient();
 
-    // 初始化参数
-    void init(const std::string& host = "192.168.0.7", int port = 8234, bool enabled = true);
+    // managed_channel=0 keeps the legacy all-channel reset behavior. A value of
+    // 1~8 limits connection-state handling and shutdown reset to that channel.
+    void init(
+        const std::string& host = "192.168.0.7",
+        int port = 8234,
+        bool enabled = true,
+        int managed_channel = 0);
 
     // 控制单个继电器动作 (channel 1~8 对应 Y1~Y8)
     void set_channel(int channel, bool state);
@@ -59,6 +64,8 @@ private:
 
     std::string host_{"192.168.0.7"};
     int port_{8234};
+    int managed_channel_{0};
+    std::atomic<bool> managed_state_{false};
     std::atomic<bool> enabled_{true};
     std::atomic<bool> connected_{false};
     std::atomic<bool> running_{false};

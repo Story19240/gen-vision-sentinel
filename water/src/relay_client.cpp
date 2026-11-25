@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <chrono>
+#include <stdexcept>
 
 RelayClient::RelayClient() {
 }
@@ -22,10 +23,15 @@ RelayClient::~RelayClient() {
     }
 }
 
-void RelayClient::init(const std::string& host, int port, bool enabled) {
+void RelayClient::init(const std::string& host, int port, bool enabled, int managed_channel) {
+    if (managed_channel < 0 || managed_channel > 8) {
+        throw std::invalid_argument("managed relay channel must be 0~8");
+    }
     host_ = host;
     port_ = port;
     enabled_ = enabled;
+    managed_channel_ = managed_channel;
+    managed_state_ = false;
 
     if (!enabled_) {
         std::cout << "[硬件继电器-C++] 模块已被配置为禁用。" << std::endl;
@@ -149,8 +155,10 @@ void RelayClient::worker_thread() {
         if (!connected_) {
             if (connect_socket()) {
                 std::cout << "⚡ [硬件继电器-C++] 成功连通继电器模块 " << host_ << ":" << port_ << "！" << std::endl;
-                // 连接成功后先全部复位断开，保证现场初始安全
-                send_command_raw(0, false);
+                // Legacy clients reset every channel. Independent services can
+                // own one channel without disturbing other monitoring modules.
+                const bool state = managed_channel_ == 0 ? false : managed_state_.load();
+                send_command_raw(managed_channel_, state);
             } else {
                 // 连接失败，等待 2 秒重试
                 std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -189,15 +197,16 @@ void RelayClient::worker_thread() {
         }
     }
 
-    // 线程退出前最后一次全关
+    // Restore only the channels owned by this client before disconnecting.
     if (connected_) {
-        send_command_raw(0, false);
+        send_command_raw(managed_channel_, false);
         close_socket();
     }
 }
 
 void RelayClient::set_channel(int channel, bool state) {
     if (!enabled_) return;
+    if (managed_channel_ > 0 && channel == managed_channel_) managed_state_ = state;
     std::lock_guard<std::mutex> lock(queue_mutex_);
     cmd_queue_.push({channel, state});
     cv_.notify_one();
